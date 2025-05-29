@@ -1,0 +1,2717 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FoodExpress - Giao đồ ăn tận nơi</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        /* Custom CSS for animations and specific elements */
+        .dish-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+        }
+        
+        .restaurant-card:hover img {
+            transform: scale(1.05);
+        }
+        
+        .cart-item-enter {
+            animation: slideIn 0.3s forwards;
+        }
+        
+        .cart-item-exit {
+            animation: slideOut 0.3s forwards;
+        }
+        
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        
+        @keyframes slideOut {
+            from { transform: translateX(0); opacity: 1; }
+            to { transform: translateX(100%); opacity: 0; }
+        }
+        
+        .tab-content {
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+            animation: fadeIn 0.5s;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: #888;
+            border-radius: 4px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+
+        /* Tùy chỉnh thanh cuộn cho form địa chỉ */
+        #delivery-address .overflow-y-auto {
+            scrollbar-width: thin;
+            scrollbar-color: #CBD5E0 #F7FAFC;
+        }
+
+        #delivery-address .overflow-y-auto::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        #delivery-address .overflow-y-auto::-webkit-scrollbar-track {
+            background: #F7FAFC;
+        }
+
+        #delivery-address .overflow-y-auto::-webkit-scrollbar-thumb {
+            background-color: #CBD5E0;
+            border-radius: 3px;
+        }
+
+        /* Thêm shadow cho phần tìm kiếm địa chỉ khi sticky */
+        #delivery-address .sticky {
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+    </style>
+    <!-- Thêm script Google Maps vào phần head -->
+    <!-- 
+        HƯỚNG DẪN: 
+        1. Truy cập Google Cloud Console: https://console.cloud.google.com/
+        2. Tạo project mới hoặc chọn project có sẵn
+        3. Bật các API sau:
+           - Maps JavaScript API
+           - Places API
+           - Directions API
+           - Geocoding API
+        4. Tạo credentials (API key)
+        5. Thay YOUR_API_KEY bên dưới bằng API key của bạn
+        6. Giới hạn API key cho domain của bạn trong Google Cloud Console
+    -->
+    <script>
+        // Định nghĩa hàm callback cho Google Maps
+        function initializeGoogleMaps() {
+            // Khởi tạo biến toàn cục cho bản đồ
+            window.deliveryMap;
+            window.deliveryMarker;
+            window.deliveryAutocomplete;
+            window.deliveryInfoWindow;
+            window.directionsService;
+            window.directionsRenderer;
+
+            // Tọa độ nhà hàng (908/13 phường 8 Gò Vấp, Hồ Chí Minh)
+            const RESTAURANT_LOCATION = {
+                lat: 10.8397959,
+                lng: 106.6667665
+            };
+
+            // Giới hạn vùng tìm kiếm cho TP.HCM
+            const HCMC_BOUNDS = {
+                north: 11.1602367,
+                south: 10.3493707,
+                east: 107.0265778,
+                west: 106.3638477
+            };
+
+            // Khởi tạo bản đồ và các service
+            try {
+                initMap();
+            } catch (error) {
+                console.error('Lỗi khởi tạo Google Maps:', error);
+                // Hiển thị thông báo lỗi cho người dùng
+                const mapElement = document.getElementById('map');
+                if (mapElement) {
+                    mapElement.innerHTML = '<div class="p-4 text-center text-red-600">Không thể tải Google Maps. Vui lòng thử lại sau.</div>';
+                }
+            }
+        }
+
+        // Thêm script Google Maps với callback
+        function loadGoogleMaps() {
+            const script = document.createElement('script');
+            script.src = 'https://maps.googleapis.com/maps/api/js?key=YOUR_API_KEY&libraries=places&language=vi&callback=initializeGoogleMaps';
+            script.async = true;
+            script.defer = true;
+            script.onerror = function() {
+                console.error('Không thể tải Google Maps API');
+                const mapElement = document.getElementById('map');
+                if (mapElement) {
+                    mapElement.innerHTML = '<div class="p-4 text-center text-red-600">Không thể tải Google Maps. Vui lòng kiểm tra kết nối mạng và thử lại.</div>';
+                }
+            };
+            document.head.appendChild(script);
+        }
+
+        // Tải Google Maps khi trang đã load xong
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', loadGoogleMaps);
+        } else {
+            loadGoogleMaps();
+        }
+    </script>
+</head>
+<body class="bg-gray-50 font-sans">
+    <!-- Header -->
+    <header class="bg-white shadow-md sticky top-0 z-50">
+        <div class="container mx-auto px-4 py-3 flex justify-between items-center">
+            <div class="flex items-center">
+                <i class="fas fa-utensils text-orange-500 text-2xl mr-2"></i>
+                <h1 class="text-xl font-bold text-gray-800">Food<span class="text-orange-500">Express</span></h1>
+            </div>
+            
+            <div class="hidden md:flex space-x-6">
+                <a href="#home" class="text-gray-700 hover:text-orange-500 transition">Trang chủ</a>
+                <a href="#restaurants" class="text-gray-700 hover:text-orange-500 transition">Nhà hàng</a>
+                <a href="#popular" class="text-gray-700 hover:text-orange-500 transition">Món ăn phổ biến</a>
+                <a href="#categories" class="text-gray-700 hover:text-orange-500 transition">Danh mục</a>
+            </div>
+            
+            <div class="flex items-center space-x-4">
+                <button id="cart-btn" class="relative text-gray-700 hover:text-orange-500">
+                    <i class="fas fa-shopping-cart text-xl"></i>
+                    <span id="cart-count" class="absolute -top-2 -right-2 bg-orange-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">0</span>
+                </button>
+                
+                <button id="auth-btn" class="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-full transition">
+                    <i class="fas fa-user mr-2"></i>Đăng nhập
+                </button>
+                
+                <button id="mobile-menu-btn" class="md:hidden text-gray-700">
+                    <i class="fas fa-bars text-xl"></i>
+                </button>
+            </div>
+        </div>
+        
+        <!-- Mobile menu -->
+        <div id="mobile-menu" class="hidden md:hidden bg-white shadow-lg absolute w-full px-4 py-2">
+            <a href="#home" class="block py-2 text-gray-700 hover:text-orange-500 transition">Trang chủ</a>
+            <a href="#restaurants" class="block py-2 text-gray-700 hover:text-orange-500 transition">Nhà hàng</a>
+            <a href="#popular" class="block py-2 text-gray-700 hover:text-orange-500 transition">Món ăn phổ biến</a>
+            <a href="#categories" class="block py-2 text-gray-700 hover:text-orange-500 transition">Danh mục</a>
+        </div>
+    </header>
+
+    <!-- Hero Section -->
+    <section id="home" class="bg-gradient-to-r from-orange-400 to-orange-600 text-white py-16">
+        <div class="container mx-auto px-4 flex flex-col md:flex-row items-center">
+            <div class="md:w-1/2 mb-8 md:mb-0">
+                <h2 class="text-4xl md:text-5xl font-bold mb-4">Món ăn yêu thích, giao tận nơi</h2>
+                <p class="text-xl mb-6">Đặt hàng chỉ với vài cú nhấp chuột từ hàng trăm nhà hàng địa phương.</p>
+                <div class="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4">
+                    <button class="bg-white text-orange-500 hover:bg-gray-100 px-6 py-3 rounded-full font-semibold transition order-now-btn">
+                        <i class="fas fa-utensils mr-2"></i>Đặt món ngay
+                    </button>
+                    <button class="border-2 border-white text-white hover:bg-white hover:text-orange-500 px-6 py-3 rounded-full font-semibold transition">
+                        <i class="fas fa-store mr-2"></i>Khám phá nhà hàng
+                    </button>
+                </div>
+            </div>
+            <div class="md:w-1/2 flex justify-center">
+                <img src="https://images.unsplash.com/photo-1504674900247-0877df9cc836?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1470&q=80" 
+                     alt="Plats de nourriture" class="rounded-lg shadow-xl w-full max-w-md">
+            </div>
+        </div>
+    </section>
+
+    <!-- Popular Dishes Section -->
+    <section id="popular" class="py-12 bg-white">
+        <div class="container mx-auto px-4">
+            <div class="flex justify-between items-center mb-8">
+                <h2 class="text-3xl font-bold text-gray-800">Món ăn <span class="text-orange-500">Phổ biến</span></h2>
+                <a href="#" class="text-orange-500 hover:text-orange-600 font-medium">Xem tất cả <i class="fas fa-arrow-right ml-1"></i></a>
+            </div>
+            
+            <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                <!-- Dish 1 -->
+                <div class="dish-card bg-white rounded-lg overflow-hidden shadow-md transition duration-300">
+                    <div class="relative">
+                        <img src="https://images.unsplash.com/photo-1568901346375-23c9450c58cd?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1398&q=80" 
+                             alt="Burger" class="w-full h-48 object-cover">
+                        <span class="absolute top-2 right-2 bg-orange-500 text-white text-xs px-2 py-1 rounded-full">Phổ biến</span>
+                    </div>
+                    <div class="p-4">
+                        <div class="flex justify-between items-start mb-2">
+                            <h3 class="font-bold text-lg text-gray-800">Burger Đặc biệt</h3>
+                            <span class="bg-green-100 text-green-800 text-xs px-2 py-1 rounded">4.8 <i class="fas fa-star"></i></span>
+                        </div>
+                        <p class="text-gray-600 text-sm mb-3">Bánh mì brioche, thịt bò xay 180g, phô mai cheddar, hành tây caramel</p>
+                        <div class="flex justify-between items-center">
+                            <span class="font-bold text-orange-500">289.000₫</span>
+                            <button class="add-to-cart bg-orange-500 hover:bg-orange-600 text-white px-3 py-1 rounded-full text-sm transition" 
+                                    data-id="1" data-name="Burger Đặc biệt" data-price="289000" data-restaurant="Burger House">
+                                <i class="fas fa-plus mr-1"></i>Thêm
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Dish 2 -->
+                <div class="dish-card bg-white rounded-lg overflow-hidden shadow-md transition duration-300">
+                    <div class="relative">
+                        <img src="https://images.unsplash.com/photo-1513104890138-7c749659a591?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1470&q=80" 
+                             alt="Pizza" class="w-full h-48 object-cover">
+                    </div>
+                    <div class="p-4">
+                        <div class="flex justify-between items-start mb-2">
+                            <h3 class="font-bold text-lg text-gray-800">Pizza Margherita</h3>
+                            <span class="bg-green-100 text-green-800 text-xs px-2 py-1 rounded">4.6 <i class="fas fa-star"></i></span>
+                        </div>
+                        <p class="text-gray-600 text-sm mb-3">Sốt cà chua, phô mai mozzarella, lá húng quế tươi, đế mỏng</p>
+                        <div class="flex justify-between items-center">
+                            <span class="font-bold text-orange-500">325.000₫</span>
+                            <button class="add-to-cart bg-orange-500 hover:bg-orange-600 text-white px-3 py-1 rounded-full text-sm transition" 
+                                    data-id="2" data-name="Pizza Margherita" data-price="325000" data-restaurant="Pizza Napoli">
+                                <i class="fas fa-plus mr-1"></i>Thêm
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Dish 3 -->
+                <div class="dish-card bg-white rounded-lg overflow-hidden shadow-md transition duration-300">
+                    <div class="relative">
+                        <img src="https://images.unsplash.com/photo-1559847844-5315695dadae?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1398&q=80" 
+                             alt="Sushi" class="w-full h-48 object-cover">
+                        <span class="absolute top-2 right-2 bg-orange-500 text-white text-xs px-2 py-1 rounded">Mới</span>
+                    </div>
+                    <div class="p-4">
+                        <div class="flex justify-between items-start mb-2">
+                            <h3 class="font-bold text-lg text-gray-800">Combo Sushi</h3>
+                            <span class="bg-green-100 text-green-800 text-xs px-2 py-1 rounded">4.9 <i class="fas fa-star"></i></span>
+                        </div>
+                        <p class="text-gray-600 text-sm mb-3">12 miếng: 4 nigiri, 4 maki, 4 sashimi, kèm đồ ăn kèm</p>
+                        <div class="flex justify-between items-center">
+                            <span class="font-bold text-orange-500">425.000₫</span>
+                            <button class="add-to-cart bg-orange-500 hover:bg-orange-600 text-white px-3 py-1 rounded-full text-sm transition" 
+                                    data-id="3" data-name="Combo Sushi" data-price="425000" data-restaurant="Sushi Palace">
+                                <i class="fas fa-plus mr-1"></i>Thêm
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Dish 4 -->
+                <div class="dish-card bg-white rounded-lg overflow-hidden shadow-md transition duration-300">
+                    <div class="relative">
+                        <img src="https://images.unsplash.com/photo-1544025162-d76694265947?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1469&q=80" 
+                             alt="Gà" class="w-full h-48 object-cover">
+                    </div>
+                    <div class="p-4">
+                        <div class="flex justify-between items-start mb-2">
+                            <h3 class="font-bold text-lg text-gray-800">Gà Nướng</h3>
+                            <span class="bg-green-100 text-green-800 text-xs px-2 py-1 rounded">4.7 <i class="fas fa-star"></i></span>
+                        </div>
+                        <p class="text-gray-600 text-sm mb-3">Gà thả vườn nướng, kèm món ăn kèm tự chọn, sốt đặc biệt</p>
+                        <div class="flex justify-between items-center">
+                            <span class="font-bold text-orange-500">345.000₫</span>
+                            <button class="add-to-cart bg-orange-500 hover:bg-orange-600 text-white px-3 py-1 rounded-full text-sm transition" 
+                                    data-id="4" data-name="Gà Nướng" data-price="345000" data-restaurant="Gà Nướng Ngon">
+                                <i class="fas fa-plus mr-1"></i>Thêm
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Restaurants Section -->
+    <section id="restaurants" class="py-12 bg-gray-50">
+        <div class="container mx-auto px-4">
+            <div class="flex justify-between items-center mb-8">
+                <h2 class="text-3xl font-bold text-gray-800">Nhà hàng <span class="text-orange-500">Của chúng tôi</span></h2>
+                <a href="#" class="text-orange-500 hover:text-orange-600 font-medium">Xem tất cả <i class="fas fa-arrow-right ml-1"></i></a>
+            </div>
+            
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                <!-- Restaurant 1 -->
+                <div class="restaurant-card bg-white rounded-lg overflow-hidden shadow-md transition duration-300">
+                    <div class="relative overflow-hidden h-48">
+                        <img src="https://images.unsplash.com/photo-1555396273-367ea4eb4db5?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1374&q=80" 
+                             alt="Burger House" class="w-full h-full object-cover transition duration-500">
+                        <span class="absolute top-2 left-2 bg-green-500 text-white text-xs px-2 py-1 rounded-full">Đang mở cửa</span>
+                    </div>
+                    <div class="p-4">
+                        <div class="flex justify-between items-start mb-2">
+                            <h3 class="font-bold text-lg text-gray-800">Burger House</h3>
+                            <div class="flex items-center">
+                                <span class="bg-green-100 text-green-800 text-xs px-2 py-1 rounded">4.8 <i class="fas fa-star"></i></span>
+                                <span class="text-gray-500 text-sm ml-2">(124 đánh giá)</span>
+                            </div>
+                        </div>
+                        <p class="text-gray-600 text-sm mb-3">Chuyên các loại burger thượng hạng với nguyên liệu tươi ngon</p>
+                        <div class="flex justify-between items-center">
+                            <div class="flex items-center text-sm text-gray-500">
+                                <i class="fas fa-clock mr-1"></i> 10:00 - 22:00
+                            </div>
+                            <a href="#restaurant-burger-house" class="text-orange-500 hover:text-orange-600 font-medium text-sm">
+                                Xem thực đơn <i class="fas fa-arrow-right ml-1"></i>
+                            </a>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Restaurant 2 -->
+                <div class="restaurant-card bg-white rounded-lg overflow-hidden shadow-md transition duration-300">
+                    <div class="relative overflow-hidden h-48">
+                        <img src="https://images.unsplash.com/photo-1513104890138-7c749659a591?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1470&q=80" 
+                             alt="Pizza Napoli" class="w-full h-full object-cover transition duration-500">
+                        <span class="absolute top-2 left-2 bg-green-500 text-white text-xs px-2 py-1 rounded-full">Đang mở cửa</span>
+                    </div>
+                    <div class="p-4">
+                        <div class="flex justify-between items-start mb-2">
+                            <h3 class="font-bold text-lg text-gray-800">Pizza Napoli</h3>
+                            <div class="flex items-center">
+                                <span class="bg-green-100 text-green-800 text-xs px-2 py-1 rounded">4.6 <i class="fas fa-star"></i></span>
+                                <span class="text-gray-500 text-sm ml-2">(98 đánh giá)</span>
+                            </div>
+                        </div>
+                        <p class="text-gray-600 text-sm mb-3">Pizza truyền thống kiểu Ý với lò nướng củi</p>
+                        <div class="flex justify-between items-center">
+                            <div class="flex items-center text-sm text-gray-500">
+                                <i class="fas fa-clock mr-1"></i> 11:00 - 23:00
+                            </div>
+                            <a href="#restaurant-pizza-napoli" class="text-orange-500 hover:text-orange-600 font-medium text-sm">
+                                Xem thực đơn <i class="fas fa-arrow-right ml-1"></i>
+                            </a>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Restaurant 3 -->
+                <div class="restaurant-card bg-white rounded-lg overflow-hidden shadow-md transition duration-300">
+                    <div class="relative overflow-hidden h-48">
+                        <img src="https://images.unsplash.com/photo-1579871494447-9811cf80d66c?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1470&q=80" 
+                             alt="Sushi Palace" class="w-full h-full object-cover transition duration-500">
+                        <span class="absolute top-2 left-2 bg-green-500 text-white text-xs px-2 py-1 rounded-full">Đang mở cửa</span>
+                    </div>
+                    <div class="p-4">
+                        <div class="flex justify-between items-start mb-2">
+                            <h3 class="font-bold text-lg text-gray-800">Sushi Palace</h3>
+                            <div class="flex items-center">
+                                <span class="bg-green-100 text-green-800 text-xs px-2 py-1 rounded">4.9 <i class="fas fa-star"></i></span>
+                                <span class="text-gray-500 text-sm ml-2">(156 đánh giá)</span>
+                            </div>
+                        </div>
+                        <p class="text-gray-600 text-sm mb-3">Món Nhật đặc sắc và sushi làm theo đơn đặt hàng</p>
+                        <div class="flex justify-between items-center">
+                            <div class="flex items-center text-sm text-gray-500">
+                                <i class="fas fa-clock mr-1"></i> 12:00 - 22:00
+                            </div>
+                            <a href="#restaurant-sushi-palace" class="text-orange-500 hover:text-orange-600 font-medium text-sm">
+                                Xem thực đơn <i class="fas fa-arrow-right ml-1"></i>
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Categories Section -->
+    <section id="categories" class="py-12 bg-white">
+        <div class="container mx-auto px-4">
+            <h2 class="text-3xl font-bold text-gray-800 mb-8">Khám phá theo <span class="text-orange-500">Danh mục</span></h2>
+            
+            <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                <!-- Category 1 -->
+                <a href="#" class="category-card bg-gray-50 rounded-lg p-4 text-center hover:bg-orange-50 transition duration-300 border border-gray-200 hover:border-orange-200">
+                    <div class="bg-orange-100 w-16 h-16 mx-auto rounded-full flex items-center justify-center mb-3">
+                        <i class="fas fa-hamburger text-orange-500 text-2xl"></i>
+                    </div>
+                    <h3 class="font-medium text-gray-800">Burger</h3>
+                    <p class="text-xs text-gray-500">56 món</p>
+                </a>
+                
+                <!-- Category 2 -->
+                <a href="#" class="category-card bg-gray-50 rounded-lg p-4 text-center hover:bg-orange-50 transition duration-300 border border-gray-200 hover:border-orange-200">
+                    <div class="bg-orange-100 w-16 h-16 mx-auto rounded-full flex items-center justify-center mb-3">
+                        <i class="fas fa-pizza-slice text-orange-500 text-2xl"></i>
+                    </div>
+                    <h3 class="font-medium text-gray-800">Pizza</h3>
+                    <p class="text-xs text-gray-500">42 món</p>
+                </a>
+                
+                <!-- Category 3 -->
+                <a href="#" class="category-card bg-gray-50 rounded-lg p-4 text-center hover:bg-orange-50 transition duration-300 border border-gray-200 hover:border-orange-200">
+                    <div class="bg-orange-100 w-16 h-16 mx-auto rounded-full flex items-center justify-center mb-3">
+                        <i class="fas fa-fish text-orange-500 text-2xl"></i>
+                    </div>
+                    <h3 class="font-medium text-gray-800">Sushi</h3>
+                    <p class="text-xs text-gray-500">38 món</p>
+                </a>
+                
+                <!-- Category 4 -->
+                <a href="#" class="category-card bg-gray-50 rounded-lg p-4 text-center hover:bg-orange-50 transition duration-300 border border-gray-200 hover:border-orange-200">
+                    <div class="bg-orange-100 w-16 h-16 mx-auto rounded-full flex items-center justify-center mb-3">
+                        <i class="fas fa-drumstick-bite text-orange-500 text-2xl"></i>
+                    </div>
+                    <h3 class="font-medium text-gray-800">Gà</h3>
+                    <p class="text-xs text-gray-500">27 món</p>
+                </a>
+                
+                <!-- Category 5 -->
+                <a href="#" class="category-card bg-gray-50 rounded-lg p-4 text-center hover:bg-orange-50 transition duration-300 border border-gray-200 hover:border-orange-200">
+                    <div class="bg-orange-100 w-16 h-16 mx-auto rounded-full flex items-center justify-center mb-3">
+                        <i class="fas fa-ice-cream text-orange-500 text-2xl"></i>
+                    </div>
+                    <h3 class="font-medium text-gray-800">Tráng miệng</h3>
+                    <p class="text-xs text-gray-500">35 món</p>
+                </a>
+                
+                <!-- Category 6 -->
+                <a href="#" class="category-card bg-gray-50 rounded-lg p-4 text-center hover:bg-orange-50 transition duration-300 border border-gray-200 hover:border-orange-200">
+                    <div class="bg-orange-100 w-16 h-16 mx-auto rounded-full flex items-center justify-center mb-3">
+                        <i class="fas fa-coffee text-orange-500 text-2xl"></i>
+                    </div>
+                    <h3 class="font-medium text-gray-800">Đồ uống</h3>
+                    <p class="text-xs text-gray-500">48 món</p>
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- How It Works Section -->
+    <section class="py-12 bg-gray-50">
+        <div class="container mx-auto px-4">
+            <h2 class="text-3xl font-bold text-center text-gray-800 mb-12">Cách thức <span class="text-orange-500">hoạt động</span></h2>
+            
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+                <!-- Step 1 -->
+                <div class="text-center">
+                    <div class="bg-orange-500 w-20 h-20 mx-auto rounded-full flex items-center justify-center mb-4 text-white text-2xl font-bold">1</div>
+                    <h3 class="font-bold text-xl text-gray-800 mb-2">Chọn nhà hàng</h3>
+                    <p class="text-gray-600">Duyệt qua danh sách nhà hàng địa phương và chọn nhà hàng bạn yêu thích.</p>
+                </div>
+                
+                <!-- Step 2 -->
+                <div class="text-center">
+                    <div class="bg-orange-500 w-20 h-20 mx-auto rounded-full flex items-center justify-center mb-4 text-white text-2xl font-bold">2</div>
+                    <h3 class="font-bold text-xl text-gray-800 mb-2">Chọn món ăn</h3>
+                    <p class="text-gray-600">Lựa chọn những món ăn yêu thích và thêm vào giỏ hàng của bạn.</p>
+                </div>
+                
+                <!-- Step 3 -->
+                <div class="text-center">
+                    <div class="bg-orange-500 w-20 h-20 mx-auto rounded-full flex items-center justify-center mb-4 text-white text-2xl font-bold">3</div>
+                    <h3 class="font-bold text-xl text-gray-800 mb-2">Giao hàng hoặc lấy tại quán</h3>
+                    <p class="text-gray-600">Chọn giao hàng tận nơi hoặc đến lấy trực tiếp và thưởng thức!</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Download App Section -->
+    <section class="py-12 bg-orange-500 text-white">
+        <div class="container mx-auto px-4">
+            <div class="flex flex-col md:flex-row items-center">
+                <div class="md:w-1/2 mb-8 md:mb-0">
+                    <h2 class="text-3xl font-bold mb-4">Tải ứng dụng của chúng tôi</h2>
+                    <p class="text-xl mb-6">Đặt món dễ dàng hơn với ứng dụng FoodExpress. Có sẵn trên iOS và Android.</p>
+                    <div class="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4">
+                        <button class="bg-black hover:bg-gray-800 text-white px-6 py-3 rounded-lg font-semibold transition flex items-center justify-center">
+                            <i class="fab fa-apple text-2xl mr-2"></i>
+                            <div class="text-left">
+                                <div class="text-xs">Tải về từ</div>
+                                <div class="text-lg">App Store</div>
+                            </div>
+                        </button>
+                        <button class="bg-black hover:bg-gray-800 text-white px-6 py-3 rounded-lg font-semibold transition flex items-center justify-center">
+                            <i class="fab fa-google-play text-2xl mr-2"></i>
+                            <div class="text-left">
+                                <div class="text-xs">Có sẵn trên</div>
+                                <div class="text-lg">Google Play</div>
+                            </div>
+                        </button>
+                    </div>
+                </div>
+                <div class="md:w-1/2 flex justify-center">
+                    <img src="https://cdn.pixabay.com/photo/2017/01/22/12/07/imac-1999636_1280.png" 
+                         alt="Ứng dụng di động" class="w-full max-w-md">
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="bg-gray-800 text-white py-12">
+        <div class="container mx-auto px-4">
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-8">
+                <div>
+                    <div class="flex items-center mb-4">
+                        <i class="fas fa-utensils text-orange-500 text-2xl mr-2"></i>
+                        <h3 class="text-xl font-bold">Food<span class="text-orange-500">Express</span></h3>
+                    </div>
+                    <p class="text-gray-400 mb-4">Món ăn yêu thích, giao tận nơi trong tích tắc.</p>
+                    <div class="flex space-x-4">
+                        <a href="#" class="text-gray-400 hover:text-orange-500 transition"><i class="fab fa-facebook-f"></i></a>
+                        <a href="#" class="text-gray-400 hover:text-orange-500 transition"><i class="fab fa-twitter"></i></a>
+                        <a href="#" class="text-gray-400 hover:text-orange-500 transition"><i class="fab fa-instagram"></i></a>
+                        <a href="#" class="text-gray-400 hover:text-orange-500 transition"><i class="fab fa-linkedin-in"></i></a>
+                    </div>
+                </div>
+                
+                <div>
+                    <h4 class="text-lg font-semibold mb-4">Liên kết hữu ích</h4>
+                    <ul class="space-y-2">
+                        <li><a href="#" class="text-gray-400 hover:text-orange-500 transition">Trang chủ</a></li>
+                        <li><a href="#" class="text-gray-400 hover:text-orange-500 transition">Nhà hàng</a></li>
+                        <li><a href="#" class="text-gray-400 hover:text-orange-500 transition">Món ăn phổ biến</a></li>
+                        <li><a href="#" class="text-gray-400 hover:text-orange-500 transition">Danh mục</a></li>
+                        <li><a href="#" class="text-gray-400 hover:text-orange-500 transition">Tài khoản của tôi</a></li>
+                    </ul>
+                </div>
+                
+                <div>
+                    <h4 class="text-lg font-semibold mb-4">Thông tin</h4>
+                    <ul class="space-y-2">
+                        <li><a href="#" class="text-gray-400 hover:text-orange-500 transition">Về chúng tôi</a></li>
+                        <li><a href="#" class="text-gray-400 hover:text-orange-500 transition">Liên hệ</a></li>
+                        <li><a href="#" class="text-gray-400 hover:text-orange-500 transition">Blog</a></li>
+                        <li><a href="#" class="text-gray-400 hover:text-orange-500 transition">Tuyển dụng</a></li>
+                        <li><a href="#" class="text-gray-400 hover:text-orange-500 transition">Báo chí</a></li>
+                    </ul>
+                </div>
+                
+                <div>
+                    <h4 class="text-lg font-semibold mb-4">Liên hệ</h4>
+                    <ul class="space-y-2">
+                        <li class="flex items-center text-gray-400"><i class="fas fa-map-marker-alt mr-2 text-orange-500"></i> 908/13 phường 8 Gò Vấp, Hồ Chí Minh</li>
+                        <li class="flex items-center text-gray-400"><i class="fas fa-phone-alt mr-2 text-orange-500"></i> 0988452262</li>
+                        <li class="flex items-center text-gray-400"><i class="fas fa-envelope mr-2 text-orange-500"></i> shopefoodexpress.com</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <div class="border-t border-gray-700 mt-8 pt-8 flex flex-col md:flex-row justify-between items-center">
+                <p class="text-gray-400 mb-4 md:mb-0">© 2023 FoodExpress. Tất cả quyền được bảo lưu.</p>
+                <div class="flex space-x-6">
+                    <a href="#" class="text-gray-400 hover:text-orange-500 transition">Điều khoản sử dụng</a>
+                    <a href="#" class="text-gray-400 hover:text-orange-500 transition">Chính sách bảo mật</a>
+                    <a href="#" class="text-gray-400 hover:text-orange-500 transition">Cookie</a>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Shopping Cart Sidebar -->
+    <div id="cart-sidebar" class="fixed top-0 right-0 w-full sm:w-96 h-full bg-white shadow-lg transform translate-x-full transition-transform duration-300 z-50 overflow-y-auto">
+        <div class="p-6">
+            <div class="flex justify-between items-center mb-6">
+                <h3 class="text-xl font-bold text-gray-800">Giỏ hàng của bạn</h3>
+                <button id="close-cart" class="text-gray-500 hover:text-orange-500">
+                    <i class="fas fa-times text-xl"></i>
+                </button>
+            </div>
+            
+            <div id="cart-items" class="space-y-4 mb-6">
+                <!-- Cart items will be added here dynamically -->
+                <div class="text-center py-8 text-gray-500">
+                    <i class="fas fa-shopping-cart text-4xl mb-2"></i>
+                    <p>Giỏ hàng của bạn đang trống</p>
+                </div>
+            </div>
+            
+            <div class="border-t border-gray-200 pt-4 mb-4">
+                <div class="flex justify-between mb-2">
+                    <span class="text-gray-600">Tạm tính</span>
+                    <span id="cart-subtotal" class="font-medium">0₫</span>
+                </div>
+                <div class="flex justify-between mb-2">
+                    <span class="text-gray-600">Phí giao hàng</span>
+                    <span id="delivery-fee" class="font-medium">30.000₫</span>
+                </div>
+                <div class="flex justify-between text-lg font-bold">
+                    <span>Tổng cộng</span>
+                    <span id="cart-total">30.000₫</span>
+                </div>
+            </div>
+            
+            <button id="checkout-btn" class="w-full bg-orange-500 hover:bg-orange-600 text-white py-3 rounded-lg font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                Thanh toán
+            </button>
+        </div>
+    </div>
+    
+    <!-- Overlay for cart and modals -->
+    <div id="overlay" class="fixed inset-0 bg-black bg-opacity-50 z-40 hidden"></div>
+
+    <!-- Auth Modal -->
+    <div id="auth-modal" class="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-white rounded-lg shadow-xl z-50 w-full max-w-md hidden">
+        <div class="p-6">
+            <div class="flex justify-between items-center mb-6">
+                <h3 class="text-xl font-bold text-gray-800">Đăng nhập</h3>
+                <button id="close-auth" class="text-gray-500 hover:text-orange-500">
+                    <i class="fas fa-times text-xl"></i>
+                </button>
+            </div>
+
+            <div class="flex mb-6">
+                <button id="normal-login-tab" class="flex-1 py-2 px-4 font-medium text-orange-500 border-b-2 border-orange-500">Đăng nhập form</button>
+                <button id="qr-login-tab" class="flex-1 py-2 px-4 font-medium text-gray-500 border-b-2 border-transparent">Đăng nhập với mã QR</button>
+            </div>
+
+            <!-- Normal Login Form -->
+            <div id="normal-login-content" class="tab-content active">
+                <form id="login-form" class="space-y-4">
+                    <div>
+                        <input type="text" id="login-username" placeholder="Email/Số điện thoại/Tên đăng nhập" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-orange-500 focus:border-orange-500" required>
+                    </div>
+                    <div>
+                        <input type="password" id="login-password" placeholder="Mật khẩu" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-orange-500 focus:border-orange-500" required>
+                    </div>
+                    
+                    <button type="submit" class="w-full bg-orange-500 hover:bg-orange-600 text-white py-3 rounded-lg font-medium transition">
+                        Đăng nhập
+                    </button>
+
+                    <div class="flex justify-between text-sm">
+                        <a href="#" class="text-blue-600 hover:text-blue-700">Quên mật khẩu</a>
+                        <a href="#" class="text-blue-600 hover:text-blue-700">Đăng nhập với SMS</a>
+                    </div>
+
+                    <div class="relative my-6">
+                        <div class="absolute inset-0 flex items-center">
+                            <div class="w-full border-t border-gray-300"></div>
+                        </div>
+                        <div class="relative flex justify-center text-sm">
+                            <span class="px-2 bg-white text-gray-500">hoặc</span>
+                        </div>
+                    </div>
+
+                    <div class="space-y-3">
+                        <button type="button" class="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-lg font-medium transition">
+                            <i class="fab fa-facebook text-xl"></i>
+                            Facebook
+                        </button>
+                        <button type="button" class="w-full flex items-center justify-center gap-2 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 py-3 rounded-lg font-medium transition">
+                            <i class="fab fa-google text-xl"></i>
+                            Google
+                        </button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- QR Login Content -->
+            <div id="qr-login-content" class="tab-content hidden">
+                <div class="text-center space-y-4">
+                    <div class="bg-gray-100 p-4 rounded-lg inline-block mx-auto">
+                        <i class="fas fa-qrcode text-8xl text-gray-400"></i>
+                    </div>
+                    <p class="text-gray-600">Quét mã QR bằng ứng dụng FoodExpress để đăng nhập</p>
+                </div>
+            </div>
+
+            <div class="mt-6 text-center text-sm text-gray-600">
+                <span>Bạn mới biết đến FoodExpress? </span>
+                <button id="switch-to-register" class="text-orange-500 hover:text-orange-600 font-medium">Đăng ký</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Registration Modal -->
+    <div id="register-modal" class="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-white rounded-lg shadow-xl z-50 w-full max-w-md hidden">
+        <div class="p-6">
+            <div class="flex justify-between items-center mb-6">
+                <h3 class="text-xl font-bold text-gray-800">Đăng ký</h3>
+                <button id="close-register" class="text-gray-500 hover:text-orange-500">
+                    <i class="fas fa-times text-xl"></i>
+                </button>
+            </div>
+
+            <form id="register-form" class="space-y-4">
+                <div>
+                    <input type="tel" id="register-phone" placeholder="Số điện thoại" 
+                           class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-orange-500 focus:border-orange-500" 
+                           required pattern="[0-9]{10}">
+                </div>
+                
+                <button type="submit" class="w-full bg-orange-500 hover:bg-orange-600 text-white py-3 rounded-lg font-medium transition">
+                    Tiếp theo
+                </button>
+
+                <div class="relative my-6">
+                    <div class="absolute inset-0 flex items-center">
+                        <div class="w-full border-t border-gray-300"></div>
+                    </div>
+                    <div class="relative flex justify-center text-sm">
+                        <span class="px-2 bg-white text-gray-500">hoặc</span>
+                    </div>
+                </div>
+
+                <div class="space-y-3">
+                    <button type="button" class="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-lg font-medium transition">
+                        <i class="fab fa-facebook text-xl"></i>
+                        Facebook
+                    </button>
+                    <button type="button" class="w-full flex items-center justify-center gap-2 bg-white hover:bg-gray-50 text-gray-700 py-3 rounded-lg font-medium transition border border-gray-300">
+                        <i class="fab fa-google text-xl" style="color: #4285F4;"></i>
+                        <span style="background: linear-gradient(45deg, #4285F4, #34A853, #FBBC05, #EA4335); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
+                            Google
+                        </span>
+                    </button>
+                </div>
+
+                <div class="mt-4 text-center text-sm text-gray-600">
+                    <p>Bằng việc đăng kí, bạn đã đồng ý với FoodExpress về 
+                        <a href="#" class="text-orange-500 hover:text-orange-600">Điều khoản dịch vụ</a> & 
+                        <a href="#" class="text-orange-500 hover:text-orange-600">Chính sách bảo mật</a>
+                    </p>
+                </div>
+
+                <div class="mt-6 text-center text-sm text-gray-600">
+                    <span>Bạn đã có tài khoản? </span>
+                    <button id="switch-to-login" class="text-orange-500 hover:text-orange-600 font-medium">Đăng nhập</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Admin Panel (hidden by default) -->
+    <div id="admin-panel" class="fixed inset-0 bg-gray-100 z-50 hidden overflow-y-auto">
+        <div class="min-h-screen">
+            <!-- Admin Header -->
+            <header class="bg-gray-800 text-white shadow">
+                <div class="container mx-auto px-4 py-3 flex justify-between items-center">
+                    <div class="flex items-center">
+                        <i class="fas fa-user-shield text-orange-500 text-2xl mr-2"></i>
+                        <h1 class="text-xl font-bold">Quản trị <span class="text-orange-500">viên</span></h1>
+                    </div>
+                    
+                    <div class="flex items-center space-x-4">
+                        <button id="admin-logout" class="text-white hover:text-orange-300 transition">
+                            <i class="fas fa-sign-out-alt mr-1"></i> Đăng xuất
+                        </button>
+                        <button id="close-admin" class="text-white hover:text-orange-300">
+                            <i class="fas fa-times text-xl"></i>
+                        </button>
+                    </div>
+                </div>
+            </header>
+            
+            <!-- Admin Navigation -->
+            <nav class="bg-white shadow-md">
+                <div class="container mx-auto px-4">
+                    <div class="flex overflow-x-auto">
+                        <button data-tab="dashboard" class="admin-tab px-4 py-3 font-medium text-gray-700 hover:text-orange-500 border-b-2 border-transparent hover:border-orange-500 transition whitespace-nowrap">
+                            <i class="fas fa-tachometer-alt mr-2"></i> Bảng điều khiển
+                        </button>
+                        <button data-tab="restaurants" class="admin-tab px-4 py-3 font-medium text-gray-700 hover:text-orange-500 border-b-2 border-transparent hover:border-orange-500 transition whitespace-nowrap">
+                            <i class="fas fa-store mr-2"></i> Nhà hàng
+                        </button>
+                        <button data-tab="dishes" class="admin-tab px-4 py-3 font-medium text-gray-700 hover:text-orange-500 border-b-2 border-transparent hover:border-orange-500 transition whitespace-nowrap">
+                            <i class="fas fa-utensils mr-2"></i> Món ăn
+                        </button>
+                        <button data-tab="orders" class="admin-tab px-4 py-3 font-medium text-gray-700 hover:text-orange-500 border-b-2 border-transparent hover:border-orange-500 transition whitespace-nowrap">
+                            <i class="fas fa-clipboard-list mr-2"></i> Đơn hàng
+                        </button>
+                        <button data-tab="users" class="admin-tab px-4 py-3 font-medium text-gray-700 hover:text-orange-500 border-b-2 border-transparent hover:border-orange-500 transition whitespace-nowrap">
+                            <i class="fas fa-users mr-2"></i> Người dùng
+                        </button>
+                        <button data-tab="settings" class="admin-tab px-4 py-3 font-medium text-gray-700 hover:text-orange-500 border-b-2 border-transparent hover:border-orange-500 transition whitespace-nowrap">
+                            <i class="fas fa-cog mr-2"></i> Cài đặt
+                        </button>
+                    </div>
+                </div>
+            </nav>
+            
+            <!-- Admin Content -->
+            <main class="container mx-auto px-4 py-6">
+                <!-- Dashboard Tab -->
+                <div id="dashboard-content" class="admin-tab-content active">
+                    <h2 class="text-2xl font-bold text-gray-800 mb-6">Bảng điều khiển</h2>
+                    
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+                        <div class="bg-white rounded-lg shadow p-6">
+                            <div class="flex items-center">
+                                <div class="p-3 rounded-full bg-orange-100 text-orange-500 mr-4">
+                                    <i class="fas fa-store text-xl"></i>
+                                </div>
+                                <div>
+                                    <p class="text-gray-500">Nhà hàng</p>
+                                    <p class="text-2xl font-bold">24</p>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="bg-white rounded-lg shadow p-6">
+                            <div class="flex items-center">
+                                <div class="p-3 rounded-full bg-blue-100 text-blue-500 mr-4">
+                                    <i class="fas fa-utensils text-xl"></i>
+                                </div>
+                                <div>
+                                    <p class="text-gray-500">Món ăn</p>
+                                    <p class="text-2xl font-bold">156</p>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="bg-white rounded-lg shadow p-6">
+                            <div class="flex items-center">
+                                <div class="p-3 rounded-full bg-green-100 text-green-500 mr-4">
+                                    <i class="fas fa-clipboard-list text-xl"></i>
+                                </div>
+                                <div>
+                                    <p class="text-gray-500">Đơn hàng (30 ngày)</p>
+                                    <p class="text-2xl font-bold">1,248</p>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="bg-white rounded-lg shadow p-6">
+                            <div class="flex items-center">
+                                <div class="p-3 rounded-full bg-purple-100 text-purple-500 mr-4">
+                                    <i class="fas fa-users text-xl"></i>
+                                </div>
+                                <div>
+                                    <p class="text-gray-500">Người dùng</p>
+                                    <p class="text-2xl font-bold">3,456</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="bg-white rounded-lg shadow p-6 mb-8">
+                        <h3 class="text-lg font-semibold text-gray-800 mb-4">Đơn hàng gần đây</h3>
+                        <div class="overflow-x-auto">
+                            <table class="min-w-full divide-y divide-gray-200">
+                                <thead class="bg-gray-50">
+                                    <tr>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Mã đơn hàng</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Khách hàng</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nhà hàng</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tổng tiền</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Trạng thái</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Ngày</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="bg-white divide-y divide-gray-200">
+                                    <tr>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">#ĐH-78945</td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Nguyễn Văn A</td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Burger House</td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">580.000₫</td>
+                                        <td class="px-6 py-4 whitespace-nowrap">
+                                            <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">Đã giao</span>
+                                        </td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">12/06/2023</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">#ĐH-78944</td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Trần Thị B</td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Pizza Napoli</td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">725.000₫</td>
+                                        <td class="px-6 py-4 whitespace-nowrap">
+                                            <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800">Đang giao</span>
+                                        </td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">12/06/2023</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">#ĐH-78943</td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Lê Văn C</td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Sushi Palace</td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">890.000₫</td>
+                                        <td class="px-6 py-4 whitespace-nowrap">
+                                            <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">Đang chuẩn bị</span>
+                                        </td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">11/06/2023</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Restaurants Tab -->
+                <div id="restaurants-content" class="admin-tab-content">
+                    <div class="flex justify-between items-center mb-6">
+                        <h2 class="text-2xl font-bold text-gray-800">Gestion des restaurants</h2>
+                        <button id="add-restaurant" class="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-lg transition">
+                            <i class="fas fa-plus mr-2"></i> Ajouter un restaurant
+                        </button>
+                    </div>
+                    
+                    <div class="bg-white rounded-lg shadow overflow-hidden mb-8">
+                        <div class="overflow-x-auto">
+                            <table class="min-w-full divide-y divide-gray-200">
+                                <thead class="bg-gray-50">
+                                    <tr>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nom</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Catégorie</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Note</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Statut</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="bg-white divide-y divide-gray-200">
+                                    <tr>
+                                        <td class="px-6 py-4 whitespace-nowrap">
+                                            <div class="flex items-center">
+                                                <div class="flex-shrink-0 h-10 w-10">
+                                                    <img class="h-10 w-10 rounded-full" src="https://images.unsplash.com/photo-1555396273-367ea4eb4db5?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1374&q=80" alt="">
+                                                </div>
+                                                <div class="ml-4">
+                                                    <div class="text-sm font-medium text-gray-900">Burger House</div>
+                                                    <div class="text-sm text-gray-500">123 Rue des Burgers</div>
+                                                </div>
+                                            </div>
+                                        </td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Fast-food</td>
+                                        <td class="px-6 py-4 whitespace-nowrap">
+                                            <div class="flex items-center">
+                                                <i class="fas fa-star text-yellow-400 mr-1"></i>
+                                                <span>4.8</span>
+                                            </div>
+                                        </td>
+                                        <td class="px-6 py-4 whitespace-nowrap">
+                                            <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">Actif</span>
+                                        </td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                                            <button class="text-orange-600 hover:text-orange-900 mr-3"><i class="fas fa-edit"></i></button>
+                                            <button class="text-red-600 hover:text-red-900"><i class="fas fa-trash-alt"></i></button>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td class="px-6 py-4 whitespace-nowrap">
+                                            <div class="flex items-center">
+                                                <div class="flex-shrink-0 h-10 w-10">
+                                                    <img class="h-10 w-10 rounded-full" src="https://images.unsplash.com/photo-1513104890138-7c749659a591?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1470&q=80" alt="">
+                                                </div>
+                                                <div class="ml-4">
+                                                    <div class="text-sm font-medium text-gray-900">Pizza Napoli</div>
+                                                    <div class="text-sm text-gray-500">456 Avenue des Pizzas</div>
+                                                </div>
+                                            </div>
+                                        </td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Italien</td>
+                                        <td class="px-6 py-4 whitespace-nowrap">
+                                            <div class="flex items-center">
+                                                <i class="fas fa-star text-yellow-400 mr-1"></i>
+                                                <span>4.6</span>
+                                            </div>
+                                        </td>
+                                        <td class="px-6 py-4 whitespace-nowrap">
+                                            <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">Actif</span>
+                                        </td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                                            <button class="text-orange-600 hover:text-orange-900 mr-3"><i class="fas fa-edit"></i></button>
+                                            <button class="text-red-600 hover:text-red-900"><i class="fas fa-trash-alt"></i></button>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td class="px-6 py-4 whitespace-nowrap">
+                                            <div class="flex items-center">
+                                                <div class="flex-shrink-0 h-10 w-10">
+                                                    <img class="h-10 w-10 rounded-full" src="https://images.unsplash.com/photo-1579871494447-9811cf80d66c?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1470&q=80" alt="">
+                                                </div>
+                                                <div class="ml-4">
+                                                    <div class="text-sm font-medium text-gray-900">Sushi Palace</div>
+                                                    <div class="text-sm text-gray-500">789 Boulevard des Sushis</div>
+                                                </div>
+                                            </div>
+                                        </td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Japonais</td>
+                                        <td class="px-6 py-4 whitespace-nowrap">
+                                            <div class="flex items-center">
+                                                <i class="fas fa-star text-yellow-400 mr-1"></i>
+                                                <span>4.9</span>
+                                            </div>
+                                        </td>
+                                        <td class="px-6 py-4 whitespace-nowrap">
+                                            <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800">En maintenance</span>
+                                        </td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                                            <button class="text-orange-600 hover:text-orange-900 mr-3"><i class="fas fa-edit"></i></button>
+                                            <button class="text-red-600 hover:text-red-900"><i class="fas fa-trash-alt"></i></button>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Dishes Tab -->
+                <div id="dishes-content" class="admin-tab-content">
+                    <div class="flex justify-between items-center mb-6">
+                        <h2 class="text-2xl font-bold text-gray-800">Gestion des plats</h2>
+                        <button id="add-dish" class="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-lg transition">
+                            <i class="fas fa-plus mr-2"></i> Ajouter un plat
+                        </button>
+                    </div>
+                    
+                    <div class="bg-white rounded-lg shadow overflow-hidden mb-8">
+                        <div class="overflow-x-auto">
+                            <table class="min-w-full divide-y divide-gray-200">
+                                <thead class="bg-gray-50">
+                                    <tr>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Image</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nom</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Restaurant</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Catégorie</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Prix</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="bg-white divide-y divide-gray-200">
+                                    <tr>
+                                        <td class="px-6 py-4 whitespace-nowrap">
+                                            <img class="h-12 w-12 rounded object-cover" src="https://images.unsplash.com/photo-1568901346375-23c9450c58cd?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1398&q=80" alt="">
+                                        </td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">Burger Đặc biệt</td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Burger House</td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Burgers</td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">289.000₫</td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                                            <button class="text-orange-600 hover:text-orange-900 mr-3"><i class="fas fa-edit"></i></button>
+                                            <button class="text-red-600 hover:text-red-900"><i class="fas fa-trash-alt"></i></button>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td class="px-6 py-4 whitespace-nowrap">
+                                            <img class="h-12 w-12 rounded object-cover" src="https://images.unsplash.com/photo-1513104890138-7c749659a591?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1470&q=80" alt="">
+                                        </td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">Pizza Margherita</td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Pizza Napoli</td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Pizzas</td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">325.000₫</td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                                            <button class="text-orange-600 hover:text-orange-900 mr-3"><i class="fas fa-edit"></i></button>
+                                            <button class="text-red-600 hover:text-red-900"><i class="fas fa-trash-alt"></i></button>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td class="px-6 py-4 whitespace-nowrap">
+                                            <img class="h-12 w-12 rounded object-cover" src="https://images.unsplash.com/photo-1559847844-5315695dadae?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1398&q=80" alt="">
+                                        </td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">Combo Sushi</td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Sushi Palace</td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Sushi</td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">425.000₫</td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                                            <button class="text-orange-600 hover:text-orange-900 mr-3"><i class="fas fa-edit"></i></button>
+                                            <button class="text-red-600 hover:text-red-900"><i class="fas fa-trash-alt"></i></button>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Orders Tab -->
+                <div id="orders-content" class="admin-tab-content">
+                    <h2 class="text-2xl font-bold text-gray-800 mb-6">Gestion des commandes</h2>
+                    
+                    <div class="bg-white rounded-lg shadow overflow-hidden mb-8">
+                        <div class="overflow-x-auto">
+                            <table class="min-w-full divide-y divide-gray-200">
+                                <thead class="bg-gray-50">
+                                    <tr>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">N° Commande</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Client</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Restaurant</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Montant</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Statut</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="bg-white divide-y divide-gray-200">
+                                    <tr>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">#ORD-78945</td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Jean Dupont</td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Burger House</td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">25,90€</td>
+                                        <td class="px-6 py-4 whitespace-nowrap">
+                                            <select class="block w-full rounded-md border-gray-300 shadow-sm focus:border-orange-500 focus:ring-orange-500 text-sm">
+                                                <option selected>Livré</option>
+                                                <option>En cours</option>
+                                                <option>En préparation</option>
+                                                <option>Annulé</option>
+                                            </select>
+                                        </td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">12/06/2023</td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                                            <button class="text-orange-600 hover:text-orange-900 mr-3"><i class="fas fa-eye"></i></button>
+                                            <button class="text-red-600 hover:text-red-900"><i class="fas fa-trash-alt"></i></button>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">#ORD-78944</td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Marie Martin</td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Pizza Napoli</td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">32,50€</td>
+                                        <td class="px-6 py-4 whitespace-nowrap">
+                                            <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800">En cours</span>
+                                        </td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">12/06/2023</td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                                            <button class="text-orange-600 hover:text-orange-900 mr-3"><i class="fas fa-eye"></i></button>
+                                            <button class="text-red-600 hover:text-red-900"><i class="fas fa-trash-alt"></i></button>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <!-- Payment Modal -->
+    <div id="payment-modal" class="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-white rounded-lg shadow-xl z-50 w-full max-w-md hidden">
+        <div class="p-6">
+            <div class="flex justify-between items-center mb-6">
+                <h3 class="text-xl font-bold text-gray-800">Thanh toán</h3>
+                <button id="close-payment" class="text-gray-500 hover:text-orange-500">
+                    <i class="fas fa-times text-xl"></i>
+                </button>
+            </div>
+
+            <form id="payment-form" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Số thẻ</label>
+                    <input type="text" id="card-number" placeholder="1234 5678 9012 3456" 
+                           class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-orange-500 focus:border-orange-500" 
+                           required pattern="[0-9]{16}">
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Ngày hết hạn</label>
+                        <input type="text" id="expiry-date" placeholder="MM/YY" 
+                               class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-orange-500 focus:border-orange-500" 
+                               required pattern="(0[1-9]|1[0-2])\/([0-9]{2})">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">CVV</label>
+                        <input type="text" id="cvv" placeholder="123" 
+                               class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-orange-500 focus:border-orange-500" 
+                               required pattern="[0-9]{3,4}">
+                    </div>
+                </div>
+                <button type="submit" class="w-full bg-orange-500 hover:bg-orange-600 text-white py-3 rounded-lg font-medium transition">
+                    Xác nhận thanh toán
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Success Modal -->
+    <div id="success-modal" class="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-white rounded-lg shadow-xl z-50 w-full max-w-md hidden">
+        <div class="p-6 text-center">
+            <div class="w-16 h-16 mx-auto mb-4 flex items-center justify-center rounded-full bg-green-100">
+                <i class="fas fa-check-circle text-4xl text-green-500"></i>
+            </div>
+            <h3 class="text-xl font-bold text-gray-800 mb-2">Đặt hàng thành công!</h3>
+            <p class="text-gray-600">Cảm ơn bạn đã đặt hàng! Thanh toán của bạn đã được xử lý thành công. Đơn hàng của bạn đang được chuẩn bị và sẽ được giao đến sớm nhất.</p>
+            <button id="close-success" class="mt-6 bg-orange-500 hover:bg-orange-600 text-white px-6 py-2 rounded-lg font-medium transition">
+                Đóng
+            </button>
+        </div>
+    </div>
+
+    <!-- Error Modal -->
+    <div id="error-modal" class="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-white rounded-lg shadow-xl z-50 w-full max-w-md hidden">
+        <div class="p-6 text-center">
+            <div class="w-16 h-16 mx-auto mb-4 flex items-center justify-center rounded-full bg-red-100">
+                <i class="fas fa-exclamation-circle text-4xl text-red-500"></i>
+            </div>
+            <h3 class="text-xl font-bold text-gray-800 mb-2">Thanh toán không thành công</h3>
+            <p id="error-message" class="text-gray-600">Đã có lỗi xảy ra trong quá trình thanh toán. Vui lòng thử lại.</p>
+            <button id="close-error" class="mt-6 bg-orange-500 hover:bg-orange-600 text-white px-6 py-2 rounded-lg font-medium transition">
+                Thử lại
+            </button>
+        </div>
+    </div>
+
+    <!-- Order Modal -->
+    <div id="order-modal" class="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-white rounded-lg shadow-xl z-50 w-full max-w-2xl hidden">
+        <div class="p-6">
+            <div class="flex justify-between items-center mb-6">
+                <h3 class="text-xl font-bold text-gray-800">Xác nhận đơn hàng</h3>
+                <button id="close-order" class="text-gray-500 hover:text-orange-500">
+                    <i class="fas fa-times text-xl"></i>
+                </button>
+            </div>
+
+            <div class="space-y-6">
+                <!-- Progress Steps -->
+                <div class="flex justify-between">
+                    <div class="flex flex-col items-center">
+                        <div class="w-8 h-8 bg-orange-500 text-white rounded-full flex items-center justify-center mb-1">1</div>
+                        <span class="text-sm text-gray-600">Giỏ hàng</span>
+                    </div>
+                    <div class="flex flex-col items-center">
+                        <div class="w-8 h-8 bg-gray-200 text-gray-600 rounded-full flex items-center justify-center mb-1">2</div>
+                        <span class="text-sm text-gray-600">Địa chỉ</span>
+                    </div>
+                    <div class="flex flex-col items-center">
+                        <div class="w-8 h-8 bg-gray-200 text-gray-600 rounded-full flex items-center justify-center mb-1">3</div>
+                        <span class="text-sm text-gray-600">Thanh toán</span>
+                    </div>
+                    <div class="flex flex-col items-center">
+                        <div class="w-8 h-8 bg-gray-200 text-gray-600 rounded-full flex items-center justify-center mb-1">4</div>
+                        <span class="text-sm text-gray-600">Xác nhận</span>
+                    </div>
+                </div>
+
+                <!-- Cart Review -->
+                <div id="cart-review" class="space-y-4">
+                    <h4 class="font-semibold text-gray-800">Xem lại giỏ hàng</h4>
+                    <div id="order-items" class="max-h-60 overflow-y-auto space-y-2">
+                        <!-- Cart items will be populated here -->
+                    </div>
+                    
+                    <div class="border-t pt-4">
+                        <div class="flex justify-between mb-2">
+                            <span class="text-gray-600">Tạm tính:</span>
+                            <span id="order-subtotal" class="font-medium">0₫</span>
+                        </div>
+                        <div class="flex justify-between mb-2">
+                            <span class="text-gray-600">Phí giao hàng:</span>
+                            <span id="order-delivery-fee" class="font-medium">30.000₫</span>
+                        </div>
+                        <div class="flex justify-between text-lg font-bold">
+                            <span>Tổng cộng</span>
+                            <span id="order-total">30.000₫</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Delivery Address -->
+                <div id="delivery-address" class="hidden space-y-4">
+                    <h4 class="font-semibold text-gray-800">Địa chỉ giao hàng</h4>
+                    <div class="max-h-[calc(100vh-250px)] overflow-y-auto pr-2">
+                        <form id="address-form" class="space-y-4">
+                            <!-- Thông tin liên hệ -->
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Họ và tên</label>
+                                    <input type="text" id="fullname" required
+                                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-orange-500 focus:border-orange-500">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Số điện thoại</label>
+                                    <input type="tel" id="phone" required pattern="0[0-9]{9}"
+                                           placeholder="0xxxxxxxxx"
+                                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-orange-500 focus:border-orange-500">
+                                    <p class="text-xs text-gray-500 mt-1">Số điện thoại phải bắt đầu bằng số 0 và có 10 chữ số</p>
+                                </div>
+                            </div>
+
+                            <!-- Tìm kiếm địa chỉ -->
+                            <div class="bg-white p-6 rounded-lg shadow-md mb-6">
+                                <h3 class="text-lg font-semibold text-gray-800 mb-4">Chọn khu vực giao hàng</h3>
+                                
+                                <!-- Bảng phí vận chuyển -->
+                                <div class="space-y-4">
+                                    <!-- Khu vực 1 -->
+                                    <label class="block cursor-pointer">
+                                        <div class="flex items-center p-4 bg-green-50 rounded-lg border border-green-100 hover:shadow-md transition-all">
+                                            <input type="radio" name="delivery-zone" value="zone1" data-fee="12000" 
+                                                   class="mr-4 text-green-500 focus:ring-green-500"
+                                                   onchange="updateDeliveryFee(this)">
+                                            <div class="flex-shrink-0 w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mr-4">
+                                                <i class="fas fa-bicycle text-green-500 text-xl"></i>
+                                            </div>
+                                            <div class="flex-grow">
+                                                <h4 class="font-medium text-green-700">Khu vực 1 (0-3 km)</h4>
+                                                <p class="text-green-600">Phí ship: 12.000 VNĐ</p>
+                                            </div>
+                                            <div class="flex-shrink-0">
+                                                <span class="px-3 py-1 bg-green-100 text-green-800 rounded-full text-sm">Nhanh</span>
+                                            </div>
+                                        </div>
+                                    </label>
+
+                                    <!-- Khu vực 2 -->
+                                    <label class="block cursor-pointer">
+                                        <div class="flex items-center p-4 bg-blue-50 rounded-lg border border-blue-100 hover:shadow-md transition-all">
+                                            <input type="radio" name="delivery-zone" value="zone2" data-fee="24000"
+                                                   class="mr-4 text-blue-500 focus:ring-blue-500"
+                                                   onchange="updateDeliveryFee(this)">
+                                            <div class="flex-shrink-0 w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mr-4">
+                                                <i class="fas fa-motorcycle text-blue-500 text-xl"></i>
+                                            </div>
+                                            <div class="flex-grow">
+                                                <h4 class="font-medium text-blue-700">Khu vực 2 (3-6 km)</h4>
+                                                <p class="text-blue-600">Phí ship: 24.000 VNĐ</p>
+                                            </div>
+                                            <div class="flex-shrink-0">
+                                                <span class="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm">Tiêu chuẩn</span>
+                                            </div>
+                                        </div>
+                                    </label>
+
+                                    <!-- Khu vực 3 -->
+                                    <label class="block cursor-pointer">
+                                        <div class="flex items-center p-4 bg-yellow-50 rounded-lg border border-yellow-100 hover:shadow-md transition-all">
+                                            <input type="radio" name="delivery-zone" value="zone3" data-fee="40000"
+                                                   class="mr-4 text-yellow-500 focus:ring-yellow-500"
+                                                   onchange="updateDeliveryFee(this)">
+                                            <div class="flex-shrink-0 w-12 h-12 bg-yellow-100 rounded-full flex items-center justify-center mr-4">
+                                                <i class="fas fa-truck text-yellow-500 text-xl"></i>
+                                            </div>
+                                            <div class="flex-grow">
+                                                <h4 class="font-medium text-yellow-700">Khu vực 3 (6-10 km)</h4>
+                                                <p class="text-yellow-600">Phí ship: 40.000 VNĐ</p>
+                                            </div>
+                                            <div class="flex-shrink-0">
+                                                <span class="px-3 py-1 bg-yellow-100 text-yellow-800 rounded-full text-sm">Xa</span>
+                                            </div>
+                                        </div>
+                                    </label>
+
+                                    <!-- Khu vực 4 -->
+                                    <label class="block cursor-pointer">
+                                        <div class="flex items-center p-4 bg-red-50 rounded-lg border border-red-100 hover:shadow-md transition-all">
+                                            <input type="radio" name="delivery-zone" value="zone4" data-fee="0"
+                                                   class="mr-4 text-red-500 focus:ring-red-500"
+                                                   onchange="showContactDialog()">
+                                            <div class="flex-shrink-0 w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mr-4">
+                                                <i class="fas fa-exclamation-triangle text-red-500 text-xl"></i>
+                                            </div>
+                                            <div class="flex-grow">
+                                                <h4 class="font-medium text-red-700">Khu vực 4 (Trên 10 km)</h4>
+                                                <p class="text-red-600">Vui lòng liên hệ để được báo giá</p>
+                                            </div>
+                                            <div class="flex-shrink-0">
+                                                <span class="px-3 py-1 bg-red-100 text-red-800 rounded-full text-sm">Đặc biệt</span>
+                                            </div>
+                                        </div>
+                                    </label>
+                                </div>
+
+                                <!-- Ghi chú -->
+                                <div class="mt-6 p-4 bg-gray-50 rounded-lg">
+                                    <h4 class="font-medium text-gray-700 mb-2">Lưu ý:</h4>
+                                    <ul class="text-gray-600 text-sm space-y-1">
+                                        <li><i class="fas fa-info-circle text-blue-500 mr-2"></i>Phí vận chuyển được tính từ địa chỉ nhà hàng</li>
+                                        <li><i class="fas fa-clock text-blue-500 mr-2"></i>Thời gian giao hàng có thể thay đổi tùy theo khoảng cách</li>
+                                        <li><i class="fas fa-phone text-blue-500 mr-2"></i>Đối với khoảng cách trên 10km, vui lòng gọi <a href="tel:1900xxxx" class="text-orange-500 hover:underline">1900xxxx</a> để được tư vấn</li>
+                                    </ul>
+                                </div>
+                            </div>
+
+                            <!-- Địa chỉ chi tiết -->
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Số nhà, Đường</label>
+                                    <input type="text" id="street" required
+                                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-orange-500 focus:border-orange-500">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Phường/Xã</label>
+                                    <input type="text" id="ward" required
+                                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-orange-500 focus:border-orange-500">
+                                </div>
+                            </div>
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Quận/Huyện</label>
+                                    <input type="text" id="district" required
+                                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-orange-500 focus:border-orange-500">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Thành phố</label>
+                                    <input type="text" id="city" required value="TP. Hồ Chí Minh"
+                                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-orange-500 focus:border-orange-500">
+                                </div>
+                            </div>
+
+                            <!-- Ghi chú -->
+                            <div class="mt-4">
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Ghi chú giao hàng (không bắt buộc)</label>
+                                <textarea id="notes" rows="2" placeholder="Ví dụ: Gọi trước khi giao, để hàng tại bảo vệ..."
+                                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-orange-500 focus:border-orange-500"></textarea>
+                            </div>
+
+                            <!-- Thông báo vùng phục vụ -->
+                            <div id="delivery-zone-notice" class="hidden bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                                <div class="flex items-center space-x-3">
+                                    <i class="fas fa-exclamation-triangle text-yellow-400"></i>
+                                    <p class="text-sm text-yellow-700">Địa chỉ của bạn nằm ngoài vùng phục vụ (bán kính 10km)</p>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Payment Method -->
+                <div id="payment-method" class="hidden space-y-4">
+                    <h4 class="font-semibold text-gray-800">Phương thức thanh toán</h4>
+                    <div class="space-y-2">
+                        <label class="flex items-center p-4 border rounded-lg cursor-pointer hover:border-orange-500">
+                            <input type="radio" name="payment" value="cod" checked class="text-orange-500">
+                            <span class="ml-2">Thanh toán khi nhận hàng (COD)</span>
+                        </label>
+                        <label class="flex items-center p-4 border rounded-lg cursor-pointer hover:border-orange-500">
+                            <input type="radio" name="payment" value="card" class="text-orange-500">
+                            <span class="ml-2">Thanh toán bằng thẻ</span>
+                        </label>
+                        <label class="flex items-center p-4 border rounded-lg cursor-pointer hover:border-orange-500">
+                            <input type="radio" name="payment" value="momo" class="text-orange-500">
+                            <span class="ml-2">Ví MoMo</span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Order Confirmation -->
+                <div id="order-confirmation" class="hidden space-y-4">
+                    <h4 class="font-semibold text-gray-800">Xác nhận đơn hàng</h4>
+                    <div class="bg-gray-50 p-4 rounded-lg space-y-4">
+                        <!-- Thông tin người nhận -->
+                        <div class="border-b pb-4">
+                            <h5 class="font-medium text-gray-800 mb-2">Thông tin người nhận</h5>
+                            <div class="space-y-2">
+                                <div class="flex justify-between">
+                                    <span class="text-gray-600">Người nhận:</span>
+                                    <span id="confirm-name" class="font-medium"></span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span class="text-gray-600">Số điện thoại:</span>
+                                    <span id="confirm-phone" class="font-medium"></span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span class="text-gray-600">Địa chỉ:</span>
+                                    <span id="confirm-address" class="font-medium"></span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span class="text-gray-600">Ghi chú:</span>
+                                    <span id="confirm-notes" class="font-medium"></span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Chi tiết đơn hàng -->
+                        <div class="border-b pb-4">
+                            <h5 class="font-medium text-gray-800 mb-2">Chi tiết đơn hàng</h5>
+                            <div id="confirm-items" class="space-y-2">
+                                <!-- Items will be populated here -->
+                            </div>
+                        </div>
+                        
+                        <!-- Thông tin thanh toán -->
+                        <div>
+                            <h5 class="font-medium text-gray-800 mb-2">Thông tin thanh toán</h5>
+                            <div class="space-y-2">
+                                <div class="flex justify-between">
+                                    <span class="text-gray-600">Tạm tính:</span>
+                                    <span id="confirm-subtotal" class="font-medium"></span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span class="text-gray-600">Khoảng cách giao hàng:</span>
+                                    <span id="confirm-distance" class="font-medium"></span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span class="text-gray-600">Phí giao hàng:</span>
+                                    <span id="confirm-delivery-fee" class="font-medium"></span>
+                                </div>
+                                <div class="flex justify-between text-lg font-bold mt-4">
+                                    <span>Tổng cộng:</span>
+                                    <span id="confirm-total" class="text-orange-500"></span>
+                                </div>
+                                <div class="flex justify-between mt-2">
+                                    <span class="text-gray-600">Phương thức thanh toán:</span>
+                                    <span id="confirm-payment" class="font-medium"></span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Navigation Buttons -->
+                <div class="flex justify-between pt-4 border-t">
+                    <button id="prev-step" class="px-6 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 hidden">
+                        <i class="fas fa-arrow-left mr-2"></i>Quay lại
+                    </button>
+                    <button id="next-step" class="px-6 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600">
+                        Tiếp theo<i class="fas fa-arrow-right ml-2"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Order Success Modal -->
+    <div id="order-success-modal" class="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-white rounded-lg shadow-xl z-50 w-full max-w-md hidden">
+        <div class="p-6 text-center">
+            <div class="w-16 h-16 mx-auto mb-4 flex items-center justify-center rounded-full bg-green-100">
+                <i class="fas fa-smile text-4xl text-green-500"></i>
+            </div>
+            <h3 class="text-xl font-bold text-gray-800 mb-2">Đặt hàng thành công!</h3>
+            <p class="text-gray-600 mb-4">Cảm ơn bạn đã đặt hàng! Đơn hàng của bạn đã được xác nhận. Chúng tôi sẽ liên hệ với bạn qua điện thoại để cung cấp thông tin chi tiết về giao hàng. <i class="fas fa-smile text-yellow-400"></i></p>
+            <div class="bg-gray-50 p-4 rounded-lg mb-6">
+                <p class="text-sm text-gray-600">Mã đơn hàng: <span id="order-id" class="font-medium"></span></p>
+                <p class="text-sm text-gray-600">Thời gian dự kiến: <span id="estimated-time" class="font-medium"></span></p>
+            </div>
+            <button id="close-order-success" class="bg-orange-500 hover:bg-orange-600 text-white px-6 py-2 rounded-lg font-medium transition">
+                Đóng
+            </button>
+        </div>
+    </div>
+
+    <!-- Order Error Modal -->
+    <div id="order-error-modal" class="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-white rounded-lg shadow-xl z-50 w-full max-w-md hidden">
+        <div class="p-6 text-center">
+            <div class="w-16 h-16 mx-auto mb-4 flex items-center justify-center rounded-full bg-red-100">
+                <i class="fas fa-exclamation-circle text-4xl text-red-500"></i>
+            </div>
+            <h3 class="text-xl font-bold text-gray-800 mb-2">Đặt hàng không thành công</h3>
+            <p id="order-error-message" class="text-gray-600 mb-6">Đã có lỗi xảy ra trong quá trình đặt hàng. Vui lòng thử lại.</p>
+            <button id="close-order-error" class="bg-orange-500 hover:bg-orange-600 text-white px-6 py-2 rounded-lg font-medium transition">
+                Thử lại
+            </button>
+        </div>
+    </div>
+
+    <!-- Thêm script xử lý Google Maps -->
+    <script>
+    // Khởi tạo bản đồ và các service
+    function initMap() {
+        // Khởi tạo services
+        directionsService = new google.maps.DirectionsService();
+        directionsRenderer = new google.maps.DirectionsRenderer();
+        
+        // Tạo bản đồ
+        deliveryMap = new google.maps.Map(document.getElementById('map'), {
+            center: RESTAURANT_LOCATION,
+            zoom: 13,
+            mapTypeControl: false,
+            streetViewControl: false,
+            fullscreenControl: false,
+            restriction: {
+                latLngBounds: HCMC_BOUNDS,
+                strictBounds: false
+            }
+        });
+
+        // Thêm marker nhà hàng
+        const restaurantMarker = new google.maps.Marker({
+            position: RESTAURANT_LOCATION,
+            map: deliveryMap,
+            icon: {
+                url: 'https://maps.google.com/mapfiles/ms/icons/red-dot.png',
+                labelOrigin: new google.maps.Point(16, 40)
+            },
+            label: {
+                text: 'FoodExpress - Gò Vấp',
+                color: '#C2410C'
+            }
+        });
+
+        // Thêm marker cho vị trí giao hàng
+        deliveryMarker = new google.maps.Marker({
+            map: deliveryMap,
+            draggable: true,
+            icon: {
+                url: 'https://maps.google.com/mapfiles/ms/icons/blue-dot.png',
+                labelOrigin: new google.maps.Point(16, 40)
+            },
+            label: {
+                text: 'Điểm giao hàng',
+                color: '#1D4ED8'
+            },
+            visible: false
+        });
+
+        // Tạo info window
+        deliveryInfoWindow = new google.maps.InfoWindow();
+
+        // Kết nối directions renderer với bản đồ
+        directionsRenderer.setMap(deliveryMap);
+
+        // Khởi tạo autocomplete
+        deliveryAutocomplete = new google.maps.places.Autocomplete(
+            document.getElementById('address-search'),
+            {
+                componentRestrictions: { country: 'vn' },
+                bounds: new google.maps.LatLngBounds(
+                    new google.maps.LatLng(HCMC_BOUNDS.south, HCMC_BOUNDS.west),
+                    new google.maps.LatLng(HCMC_BOUNDS.north, HCMC_BOUNDS.east)
+                ),
+                strictBounds: true,
+                fields: ['address_components', 'geometry', 'name'],
+                types: ['address']
+            }
+        );
+
+        // Sự kiện khi chọn địa chỉ từ autocomplete
+        deliveryAutocomplete.addListener('place_changed', () => {
+            const place = deliveryAutocomplete.getPlace();
+            if (!place.geometry) {
+                window.alert('Không tìm thấy địa chỉ này');
+                return;
+            }
+
+            // Kiểm tra xem địa chỉ có nằm trong TP.HCM không
+            let isInHCMC = false;
+            for (const component of place.address_components) {
+                if (component.types.includes('administrative_area_level_1') && 
+                    (component.long_name.includes('Hồ Chí Minh') || 
+                     component.long_name.includes('Ho Chi Minh'))) {
+                    isInHCMC = true;
+                    break;
+                }
+            }
+
+            if (!isInHCMC) {
+                showAddressError('Vui lòng chọn địa chỉ trong khu vực TP.HCM');
+                return;
+            }
+
+            // Cập nhật bản đồ và marker
+            deliveryMap.setCenter(place.geometry.location);
+            deliveryMap.setZoom(16);
+            deliveryMarker.setPosition(place.geometry.location);
+            deliveryMarker.setVisible(true);
+
+            // Cập nhật thông tin địa chỉ
+            updateAddressInfo(place);
+        });
+
+        // Sự kiện khi kéo thả marker
+        deliveryMarker.addListener('dragend', () => {
+            const position = deliveryMarker.getPosition();
+            reverseGeocode(position);
+        });
+
+        // Sự kiện click trên bản đồ
+        deliveryMap.addListener('click', (event) => {
+            deliveryMarker.setPosition(event.latLng);
+            deliveryMarker.setVisible(true);
+            reverseGeocode(event.latLng);
+        });
+    }
+
+    // Hàm reverse geocoding
+    function reverseGeocode(latLng) {
+        const geocoder = new google.maps.Geocoder();
+        geocoder.geocode({ location: latLng }, (results, status) => {
+            if (status === 'OK') {
+                if (results[0]) {
+                    // Cập nhật ô tìm kiếm
+                    document.getElementById('address-search').value = results[0].formatted_address;
+                    
+                    // Cập nhật thông tin địa chỉ
+                    updateAddressInfo(results[0]);
+                    
+                    // Hiển thị info window
+                    deliveryInfoWindow.setContent(results[0].formatted_address);
+                    deliveryInfoWindow.open(deliveryMap, deliveryMarker);
+                }
+            }
+        });
+    }
+    </script>
+
+    <!-- Add this script section at the end of the body -->
+    <script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Get all modal elements
+        const authModal = document.getElementById('auth-modal');
+        const registerModal = document.getElementById('register-modal');
+        const overlay = document.getElementById('overlay');
+        const cartSidebar = document.getElementById('cart-sidebar');
+        
+        // Get all button elements
+        const authBtn = document.getElementById('auth-btn');
+        const closeAuthBtn = document.getElementById('close-auth');
+        const closeRegisterBtn = document.getElementById('close-register');
+        const switchToRegisterBtn = document.getElementById('switch-to-register');
+        const switchToLoginBtn = document.getElementById('switch-to-login');
+        const cartBtn = document.getElementById('cart-btn');
+        const closeCartBtn = document.getElementById('close-cart');
+
+        // Get tab elements
+        const normalLoginTab = document.getElementById('normal-login-tab');
+        const qrLoginTab = document.getElementById('qr-login-tab');
+        const normalLoginContent = document.getElementById('normal-login-content');
+        const qrLoginContent = document.getElementById('qr-login-content');
+
+        // Show modal functions
+        function showAuthModal() {
+            authModal.classList.remove('hidden');
+            registerModal.classList.add('hidden');
+            cartSidebar.classList.remove('translate-x-0');
+            cartSidebar.classList.add('translate-x-full');
+            overlay.classList.remove('hidden');
+            switchToTab('normal');
+        }
+
+        function showRegisterModal() {
+            registerModal.classList.remove('hidden');
+            authModal.classList.add('hidden');
+            cartSidebar.classList.remove('translate-x-0');
+            cartSidebar.classList.add('translate-x-full');
+            overlay.classList.remove('hidden');
+        }
+
+        // Hide modal function
+        function hideModals() {
+            authModal.classList.add('hidden');
+            registerModal.classList.add('hidden');
+            cartSidebar.classList.remove('translate-x-0');
+            cartSidebar.classList.add('translate-x-full');
+            overlay.classList.add('hidden');
+        }
+
+        // Toggle cart sidebar
+        function toggleCart() {
+            cartSidebar.classList.toggle('translate-x-full');
+            overlay.classList.toggle('hidden');
+            authModal.classList.add('hidden');
+            registerModal.classList.add('hidden');
+        }
+
+        // Switch tab function
+        function switchToTab(tabName) {
+            if (tabName === 'normal') {
+            normalLoginTab.classList.add('text-orange-500', 'border-orange-500');
+            qrLoginTab.classList.remove('text-orange-500', 'border-orange-500');
+            normalLoginContent.classList.remove('hidden');
+            qrLoginContent.classList.add('hidden');
+            } else {
+            qrLoginTab.classList.add('text-orange-500', 'border-orange-500');
+            normalLoginTab.classList.remove('text-orange-500', 'border-orange-500');
+            qrLoginContent.classList.remove('hidden');
+            normalLoginContent.classList.add('hidden');
+            }
+        }
+
+        // Event Listeners
+        authBtn.addEventListener('click', showAuthModal);
+        closeAuthBtn.addEventListener('click', hideModals);
+        closeRegisterBtn.addEventListener('click', hideModals);
+        overlay.addEventListener('click', hideModals);
+        switchToRegisterBtn.addEventListener('click', showRegisterModal);
+        switchToLoginBtn.addEventListener('click', showAuthModal);
+        cartBtn.addEventListener('click', toggleCart);
+        closeCartBtn.addEventListener('click', toggleCart);
+
+        normalLoginTab.addEventListener('click', () => switchToTab('normal'));
+        qrLoginTab.addEventListener('click', () => switchToTab('qr'));
+
+        // Handle login form submission
+        const loginForm = document.getElementById('login-form');
+        loginForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            const username = document.getElementById('login-username').value;
+            const password = document.getElementById('login-password').value;
+            console.log('Login attempt:', { username, password });
+            // Add your login logic here
+        });
+
+        // Handle registration form submission
+        const registerForm = document.getElementById('register-form');
+        registerForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            const phone = document.getElementById('register-phone').value;
+            console.log('Registration attempt:', { phone });
+            // Add your registration logic here
+        });
+
+        // Close modals when pressing Escape key
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                hideModals();
+            }
+        });
+
+        // Mobile menu toggle
+        const mobileMenuBtn = document.getElementById('mobile-menu-btn');
+        const mobileMenu = document.getElementById('mobile-menu');
+
+        mobileMenuBtn.addEventListener('click', function() {
+            mobileMenu.classList.toggle('hidden');
+        });
+
+        // Initialize cart items count
+        let cartItemsCount = 0;
+        const cartCount = document.getElementById('cart-count');
+        const checkoutBtn = document.getElementById('checkout-btn');
+        const cartItems = document.getElementById('cart-items');
+        const cartSubtotal = document.getElementById('cart-subtotal');
+        const cartTotal = document.getElementById('cart-total');
+
+        // Thêm các biến modal mới
+        const paymentModal = document.getElementById('payment-modal');
+        const successModal = document.getElementById('success-modal');
+        const errorModal = document.getElementById('error-modal');
+        const closePaymentBtn = document.getElementById('close-payment');
+        const closeSuccessBtn = document.getElementById('close-success');
+        const closeErrorBtn = document.getElementById('close-error');
+        const errorMessage = document.getElementById('error-message');
+
+        // Hàm hiển thị modal thanh toán
+        function showPaymentModal() {
+            paymentModal.classList.remove('hidden');
+            cartSidebar.classList.add('translate-x-full');
+            overlay.classList.remove('hidden');
+        }
+
+        // Hàm hiển thị modal thành công
+        function showSuccessModal() {
+            successModal.classList.remove('hidden');
+            paymentModal.classList.add('hidden');
+            overlay.classList.remove('hidden');
+        }
+
+        // Hàm hiển thị modal lỗi
+        function showErrorModal(message) {
+            errorMessage.textContent = message;
+            errorModal.classList.remove('hidden');
+            paymentModal.classList.add('hidden');
+            overlay.classList.remove('hidden');
+        }
+
+        // Xử lý nút thanh toán trong giỏ hàng
+        checkoutBtn.addEventListener('click', showPaymentModal);
+
+        // Xử lý đóng các modal
+        closePaymentBtn.addEventListener('click', () => {
+            paymentModal.classList.add('hidden');
+            overlay.classList.add('hidden');
+        });
+
+        closeSuccessBtn.addEventListener('click', () => {
+            successModal.classList.add('hidden');
+            overlay.classList.add('hidden');
+            // Reset giỏ hàng
+            cartItemsCount = 0;
+            cartCount.textContent = '0';
+            cartItems.innerHTML = '<div class="text-center py-8 text-gray-500"><i class="fas fa-shopping-cart text-4xl mb-2"></i><p>Giỏ hàng của bạn đang trống</p></div>';
+            cartSubtotal.textContent = '0₫';
+            cartTotal.textContent = '30.000₫';
+            checkoutBtn.disabled = true;
+        });
+
+        closeErrorBtn.addEventListener('click', () => {
+            errorModal.classList.add('hidden');
+            paymentModal.classList.remove('hidden');
+        });
+
+        // Xử lý form thanh toán
+        const paymentForm = document.getElementById('payment-form');
+        paymentForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            const cardNumber = document.getElementById('card-number').value;
+            const expiryDate = document.getElementById('expiry-date').value;
+            const cvv = document.getElementById('cvv').value;
+
+            // Giả lập các trường hợp lỗi
+            const randomError = Math.random();
+            if (randomError < 0.1) {
+                showErrorModal("Thanh toán không thành công. Vui lòng kiểm tra lại thông tin thẻ của bạn.");
+            } else if (randomError < 0.2) {
+                showErrorModal("Thanh toán không thành công. Số dư tài khoản của bạn không đủ để thực hiện giao dịch.");
+            } else if (randomError < 0.3) {
+                showErrorModal("Thanh toán không thành công. Thẻ tín dụng của bạn đã hết hạn. Vui lòng sử dụng thẻ khác.");
+            } else if (randomError < 0.4) {
+                showErrorModal("Thanh toán không thành công. Ngân hàng của bạn đã từ chối giao dịch. Vui lòng liên hệ với ngân hàng để biết thêm chi tiết.");
+            } else if (randomError < 0.5) {
+                showErrorModal("Thanh toán không thành công. Vui lòng kiểm tra kết nối Internet của bạn và thử lại.");
+            } else if (randomError < 0.6) {
+                showErrorModal("Thanh toán không thành công do lỗi hệ thống. Vui lòng thử lại sau.");
+            } else if (randomError < 0.7) {
+                showErrorModal("Thanh toán không thành công. Bạn đã vượt quá giới hạn giao dịch hàng ngày của thẻ.");
+            } else {
+                showSuccessModal();
+            }
+        });
+
+        // Xử lý xóa món ăn khỏi giỏ hàng
+        function removeCartItem(item, price) {
+            item.remove();
+            cartItemsCount--;
+            cartCount.textContent = cartItemsCount;
+
+            // Cập nhật tổng tiền
+            const subtotal = parseInt(cartSubtotal.textContent.replace(/[^\d]/g, '')) - price;
+            cartSubtotal.textContent = subtotal.toLocaleString() + '₫';
+            cartTotal.textContent = (subtotal + 30000).toLocaleString() + '₫';
+
+            // Kiểm tra nếu giỏ hàng trống
+            if (cartItemsCount === 0) {
+                cartItems.innerHTML = '<div class="text-center py-8 text-gray-500"><i class="fas fa-shopping-cart text-4xl mb-2"></i><p>Giỏ hàng của bạn đang trống</p></div>';
+                checkoutBtn.disabled = true;
+            }
+        }
+
+        // Xử lý thêm vào giỏ hàng
+        const addToCartButtons = document.querySelectorAll('.add-to-cart');
+        addToCartButtons.forEach(button => {
+            button.addEventListener('click', function() {
+                const id = this.dataset.id;
+                const name = this.dataset.name;
+                const price = parseInt(this.dataset.price);
+                const restaurant = this.dataset.restaurant;
+
+                cartItemsCount++;
+                cartCount.textContent = cartItemsCount;
+
+                if (cartItemsCount === 1) {
+                    cartItems.innerHTML = '';
+                }
+
+                const itemElement = document.createElement('div');
+                itemElement.className = 'cart-item flex items-center justify-between p-4 border-b border-gray-200';
+                itemElement.innerHTML = `
+                    <div>
+                        <h4 class="font-medium text-gray-800">${name}</h4>
+                        <p class="text-sm text-gray-500">${restaurant}</p>
+                    </div>
+                    <div class="flex items-center">
+                        <span class="text-orange-500 font-medium">${price.toLocaleString()}₫</span>
+                        <button class="ml-4 text-red-500 hover:text-red-600 remove-item">
+                            <i class="fas fa-trash-alt"></i>
+                        </button>
+                    </div>
+                `;
+
+                // Thêm sự kiện xóa cho nút xóa
+                const removeButton = itemElement.querySelector('.remove-item');
+                removeButton.addEventListener('click', () => removeCartItem(itemElement, price));
+
+                cartItems.appendChild(itemElement);
+
+                const subtotal = parseInt(cartSubtotal.textContent.replace(/[^\d]/g, '')) + price;
+                cartSubtotal.textContent = subtotal.toLocaleString() + '₫';
+                cartTotal.textContent = (subtotal + 30000).toLocaleString() + '₫';
+
+                checkoutBtn.disabled = false;
+                toggleCart();
+            });
+        });
+
+        // Order processing
+        const orderModal = document.getElementById('order-modal');
+        const orderSuccessModal = document.getElementById('order-success-modal');
+        const orderErrorModal = document.getElementById('order-error-modal');
+        const closeOrderBtn = document.getElementById('close-order');
+        const closeOrderSuccessBtn = document.getElementById('close-order-success');
+        const closeOrderErrorBtn = document.getElementById('close-order-error');
+        const orderNowBtn = document.querySelector('.order-now-btn');
+        const prevStepBtn = document.getElementById('prev-step');
+        const nextStepBtn = document.getElementById('next-step');
+
+        // Order steps
+        const steps = ['cart-review', 'delivery-address', 'payment-method', 'order-confirmation'];
+        let currentStep = 0;
+
+        // Show order modal
+        function showOrderModal() {
+            orderModal.classList.remove('hidden');
+            overlay.classList.remove('hidden');
+            // Copy items from cart to order review
+            const orderItems = document.getElementById('order-items');
+            orderItems.innerHTML = cartItems.innerHTML;
+            // Copy totals
+            document.getElementById('order-subtotal').textContent = cartSubtotal.textContent;
+            document.getElementById('order-total').textContent = cartTotal.textContent;
+            updateOrderStep();
+        }
+
+        // Update order step
+        function updateOrderStep() {
+            // Hide all steps
+            steps.forEach(step => {
+                document.getElementById(step).classList.add('hidden');
+            });
+
+            // Show current step
+            document.getElementById(steps[currentStep]).classList.remove('hidden');
+
+            // Update progress indicators
+            const indicators = document.querySelectorAll('.w-8.h-8');
+            indicators.forEach((indicator, index) => {
+                if (index <= currentStep) {
+                    indicator.classList.remove('bg-gray-200', 'text-gray-600');
+                    indicator.classList.add('bg-orange-500', 'text-white');
+                } else {
+                    indicator.classList.add('bg-gray-200', 'text-gray-600');
+                    indicator.classList.remove('bg-orange-500', 'text-white');
+                }
+            });
+
+            // Update navigation buttons
+            prevStepBtn.classList.toggle('hidden', currentStep === 0);
+            nextStepBtn.textContent = currentStep === steps.length - 1 ? 'Xác nhận đặt hàng' : 'Tiếp theo';
+        }
+
+        // Handle next step
+        nextStepBtn.addEventListener('click', function() {
+            if (currentStep === steps.length - 1) {
+                // Process order
+                processOrder();
+            } else {
+                if (validateCurrentStep()) {
+                    currentStep++;
+                    updateOrderStep();
+                }
+            }
+        });
+
+        // Handle previous step
+        prevStepBtn.addEventListener('click', function() {
+            if (currentStep > 0) {
+                currentStep--;
+                updateOrderStep();
+            }
+        });
+
+        // Validate current step
+        function validateCurrentStep() {
+            switch(steps[currentStep]) {
+                case 'cart-review':
+                    return validateCart();
+                case 'delivery-address':
+                    return validateAddress();
+                case 'payment-method':
+                    return validatePayment();
+                case 'order-confirmation':
+                    return updateOrderConfirmation();
+                default:
+                    return true;
+            }
+        }
+
+        // Validate cart
+        function validateCart() {
+            if (cartItemsCount === 0) {
+                showOrderError('Vui lòng thêm món ăn vào giỏ hàng');
+                return false;
+            }
+            return true;
+        }
+
+        // Validate address
+        function validateAddress() {
+            const form = document.getElementById('address-form');
+            if (!form.checkValidity()) {
+                form.reportValidity();
+                return false;
+            }
+
+            const phone = document.getElementById('phone').value;
+            if (!phone.startsWith('0') || phone.length !== 10) {
+                showOrderError('Số điện thoại phải bắt đầu bằng số 0 và có 10 chữ số');
+                return false;
+            }
+
+            const distance = document.getElementById('distance').value;
+            if (distance < 1 || distance > 20) {
+                showOrderError('Khoảng cách giao hàng phải từ 1km đến 20km');
+                return false;
+            }
+
+            return true;
+        }
+
+        // Validate payment
+        function validatePayment() {
+            const selectedPayment = document.querySelector('input[name="payment"]:checked');
+            if (!selectedPayment) {
+                showOrderError('Vui lòng chọn phương thức thanh toán');
+                return false;
+            }
+            return true;
+        }
+
+        // Thêm hàm cập nhật thông tin xác nhận đơn hàng
+        function updateOrderConfirmation() {
+            // Lấy thông tin người nhận
+            const fullname = document.getElementById('fullname').value;
+            const phone = document.getElementById('phone').value;
+            const street = document.getElementById('street').value;
+            const ward = document.getElementById('ward').value;
+            const district = document.getElementById('district').value;
+            const city = document.getElementById('city').value;
+            const notes = document.getElementById('notes').value;
+
+            // Cập nhật thông tin người nhận
+            document.getElementById('confirm-name').textContent = fullname;
+            document.getElementById('confirm-phone').textContent = phone;
+            document.getElementById('confirm-address').textContent = `${street}, ${ward}, ${district}, ${city}`;
+            document.getElementById('confirm-notes').textContent = notes || 'Không có ghi chú';
+
+            // Cập nhật chi tiết đơn hàng
+            const cartItems = document.getElementById('cart-items');
+            const confirmItems = document.getElementById('confirm-items');
+            confirmItems.innerHTML = cartItems.innerHTML;
+
+            // Lấy thông tin khu vực giao hàng đã chọn
+            const selectedZone = document.querySelector('input[name="delivery-zone"]:checked');
+            let deliveryFee = 0;
+            let zoneText = '';
+            
+            if (selectedZone) {
+                deliveryFee = parseInt(selectedZone.dataset.fee);
+                switch(selectedZone.value) {
+                    case 'zone1':
+                        zoneText = '0-3 km';
+                        break;
+                    case 'zone2':
+                        zoneText = '3-6 km';
+                        break;
+                    case 'zone3':
+                        zoneText = '6-10 km';
+                        break;
+                }
+            }
+
+            // Cập nhật thông tin thanh toán
+            const subtotal = parseInt(document.getElementById('cart-subtotal').textContent.replace(/[^\d]/g, '')) || 0;
+            document.getElementById('confirm-subtotal').textContent = subtotal.toLocaleString() + '₫';
+            document.getElementById('confirm-distance').textContent = zoneText;
+            document.getElementById('confirm-delivery-fee').textContent = deliveryFee.toLocaleString() + '₫';
+            
+            // Tính tổng cộng
+            const total = subtotal + deliveryFee;
+            document.getElementById('confirm-total').textContent = total.toLocaleString() + '₫';
+
+            // Cập nhật phương thức thanh toán
+            const selectedPayment = document.querySelector('input[name="payment"]:checked');
+            let paymentText = '';
+            if (selectedPayment) {
+                switch(selectedPayment.value) {
+                    case 'cod':
+                        paymentText = 'Thanh toán khi nhận hàng (COD)';
+                        break;
+                    case 'card':
+                        paymentText = 'Thanh toán bằng thẻ';
+                        break;
+                    case 'momo':
+                        paymentText = 'Ví MoMo';
+                        break;
+                }
+            }
+            document.getElementById('confirm-payment').textContent = paymentText;
+
+            return true;
+        }
+
+        // Cập nhật khi chuyển bước
+        function validateCurrentStep() {
+            switch(ORDER_STEPS[currentStep]) {
+                case 'cart-review':
+                    return validateCart();
+                case 'delivery-address':
+                    return validateDeliveryAddress();
+                case 'payment-method':
+                    return validatePayment();
+                case 'order-confirmation':
+                    return updateOrderConfirmation();
+                default:
+                    return true;
+            }
+        }
+
+        // Xác thực thông tin địa chỉ
+        function validateDeliveryAddress() {
+            const requiredFields = ['fullname', 'phone', 'street', 'ward', 'district', 'city'];
+            let isValid = true;
+
+            // Kiểm tra các trường bắt buộc
+            for (const field of requiredFields) {
+                const input = document.getElementById(field);
+                if (!input.value.trim()) {
+                    input.classList.add('border-red-500');
+                    isValid = false;
+                } else {
+                    input.classList.remove('border-red-500');
+                }
+            }
+
+            // Kiểm tra số điện thoại
+            const phone = document.getElementById('phone').value;
+            if (!phone.match(/^0[0-9]{9}$/)) {
+                document.getElementById('phone').classList.add('border-red-500');
+                isValid = false;
+            }
+
+            // Kiểm tra khu vực giao hàng
+            const selectedZone = document.querySelector('input[name="delivery-zone"]:checked');
+            if (!selectedZone) {
+                showError('Vui lòng chọn khu vực giao hàng');
+                isValid = false;
+            }
+
+            if (!isValid) {
+                showError('Vui lòng điền đầy đủ thông tin giao hàng');
+            }
+
+            return isValid;
+        }
+
+        // Xác thực phương thức thanh toán
+        function validatePayment() {
+            const selectedPayment = document.querySelector('input[name="payment"]:checked');
+            if (!selectedPayment) {
+                showError('Vui lòng chọn phương thức thanh toán');
+                return false;
+            }
+            return true;
+        }
+
+        // Hiển thị thông báo lỗi
+        function showError(message) {
+            const errorModal = document.getElementById('order-error-modal');
+            const errorMessage = document.getElementById('order-error-message');
+            errorMessage.textContent = message;
+            errorModal.classList.remove('hidden');
+            overlay.classList.remove('hidden');
+        }
+
+        // Process order
+        function processOrder() {
+            // Simulate order processing
+            const orderData = {
+                items: Array.from(document.querySelectorAll('.cart-item')).map(item => ({
+                    name: item.querySelector('h4').textContent,
+                    price: item.querySelector('.text-orange-500').textContent
+                })),
+                address: {
+                    fullname: document.getElementById('fullname').value,
+                    phone: document.getElementById('phone').value,
+                    address: document.getElementById('address').value,
+                    notes: document.getElementById('notes').value
+                },
+                payment: document.querySelector('input[name="payment"]:checked').value,
+                total: document.getElementById('order-total').textContent
+            };
+
+            // Simulate API call
+            setTimeout(() => {
+                const success = Math.random() > 0.3; // 70% success rate
+                if (success) {
+                    showOrderSuccess();
+                } else {
+                    const errors = [
+                        'Một số món ăn đã hết hàng',
+                        'Địa chỉ giao hàng nằm ngoài khu vực phục vụ',
+                        'Nhà hàng tạm thời không nhận đơn mới',
+                        'Lỗi kết nối với hệ thống'
+                    ];
+                    showOrderError(errors[Math.floor(Math.random() * errors.length)]);
+                }
+            }, 2000);
+        }
+
+        // Show order success
+        function showOrderSuccess() {
+            orderModal.classList.add('hidden');
+            orderSuccessModal.classList.remove('hidden');
+            document.getElementById('order-id').textContent = '#' + Math.random().toString(36).substr(2, 9).toUpperCase();
+            document.getElementById('estimated-time').textContent = '30-45 phút';
+            
+            // Update success message
+            const successMessage = document.querySelector('#order-success-modal p.text-gray-600');
+            successMessage.innerHTML = 'Cảm ơn bạn đã đặt hàng! Đơn hàng của bạn đã được xác nhận. Chúng tôi sẽ liên hệ với bạn qua điện thoại để cung cấp thông tin chi tiết về giao hàng. <i class="fas fa-smile text-yellow-400"></i>';
+        }
+
+        // Show order error
+        function showOrderError(message) {
+            document.getElementById('order-error-message').textContent = message;
+            orderErrorModal.classList.remove('hidden');
+        }
+
+        // Event listeners for order buttons
+        if (orderNowBtn) {
+            orderNowBtn.addEventListener('click', function(e) {
+                e.preventDefault();
+                showOrderModal();
+            });
+        }
+        closeOrderBtn.addEventListener('click', () => {
+            orderModal.classList.add('hidden');
+            overlay.classList.add('hidden');
+        });
+        closeOrderSuccessBtn.addEventListener('click', () => {
+            orderSuccessModal.classList.add('hidden');
+            overlay.classList.add('hidden');
+            // Reset cart
+            cartItemsCount = 0;
+            cartCount.textContent = '0';
+            cartItems.innerHTML = '<div class="text-center py-8 text-gray-500"><i class="fas fa-shopping-cart text-4xl mb-2"></i><p>Giỏ hàng của bạn đang trống</p></div>';
+            cartSubtotal.textContent = '0₫';
+            cartTotal.textContent = '30.000₫';
+            checkoutBtn.disabled = true;
+        });
+        closeOrderErrorBtn.addEventListener('click', () => {
+            orderErrorModal.classList.add('hidden');
+        });
+
+        // Xử lý đặt hàng
+        function handleOrderSubmission() {
+            // Ẩn modal đặt hàng
+            orderModal.classList.add('hidden');
+            
+            // Hiển thị modal thành công với thông báo mới
+            const successModal = document.getElementById('order-success-modal');
+            successModal.classList.remove('hidden');
+            
+            // Cập nhật nội dung thông báo
+            const messageContainer = document.querySelector('#order-success-modal p.text-gray-600');
+            messageContainer.innerHTML = 'Cảm ơn bạn đã đặt hàng! Đơn hàng của bạn đã được xác nhận. Chúng tôi sẽ liên hệ với bạn qua điện thoại để cung cấp thông tin chi tiết về giao hàng. <i class="fas fa-smile text-yellow-400"></i>';
+            
+            // Reset giỏ hàng
+            resetCart();
+        }
+
+        // Hàm reset giỏ hàng
+        function resetCart() {
+            cartItemsCount = 0;
+            cartCount.textContent = '0';
+            cartItems.innerHTML = '<div class="text-center py-8 text-gray-500"><i class="fas fa-shopping-cart text-4xl mb-2"></i><p>Giỏ hàng của bạn đang trống</p></div>';
+            cartSubtotal.textContent = '0₫';
+            cartTotal.textContent = '30.000₫';
+            checkoutBtn.disabled = true;
+        }
+    });
+
+    // Các bước trong quá trình đặt hàng
+    const ORDER_STEPS = ['cart-review', 'delivery-address', 'payment-method', 'order-confirmation'];
+    let currentStep = 0;
+
+    // Hiển thị bước hiện tại
+    function showCurrentStep() {
+        ORDER_STEPS.forEach((step, index) => {
+            const stepElement = document.getElementById(step);
+            if (stepElement) {
+                stepElement.style.display = index === currentStep ? 'block' : 'none';
+            }
+        });
+
+        // Cập nhật nút điều hướng
+        const prevBtn = document.getElementById('prev-step');
+        const nextBtn = document.getElementById('next-step');
+
+        if (prevBtn) {
+            prevBtn.style.display = currentStep > 0 ? 'block' : 'none';
+        }
+
+        if (nextBtn) {
+            nextBtn.textContent = currentStep === ORDER_STEPS.length - 1 ? 'Xác nhận đặt hàng' : 'Tiếp theo';
+        }
+    }
+
+    // Xác thực form địa chỉ
+    function validateDeliveryForm() {
+        const requiredFields = ['street', 'ward', 'district', 'city'];
+        let isValid = true;
+        let firstInvalidField = null;
+
+        requiredFields.forEach(fieldId => {
+            const field = document.getElementById(fieldId);
+            if (!field.value.trim()) {
+                isValid = false;
+                field.classList.add('border-red-500');
+                if (!firstInvalidField) {
+                    firstInvalidField = field;
+                }
+            } else {
+                field.classList.remove('border-red-500');
+            }
+        });
+
+        if (!isValid && firstInvalidField) {
+            firstInvalidField.focus();
+            showError('Vui lòng điền đầy đủ thông tin địa chỉ');
+        }
+
+        return isValid;
+    }
+
+    // Hiển thị thông báo lỗi
+    function showError(message) {
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-lg mb-4';
+        errorDiv.innerHTML = `<i class="fas fa-exclamation-circle mr-2"></i>${message}`;
+
+        // Thêm thông báo lỗi vào đầu form
+        const form = document.querySelector('form');
+        form.insertBefore(errorDiv, form.firstChild);
+
+        // Tự động ẩn thông báo sau 3 giây
+        setTimeout(() => {
+            errorDiv.remove();
+        }, 3000);
+    }
+
+    // Xử lý khi click nút Tiếp theo
+    document.getElementById('next-step').addEventListener('click', () => {
+        if (validateCurrentStep()) {
+            handleStepChange(); // Lưu thông tin trước khi chuyển bước
+            if (currentStep < ORDER_STEPS.length - 1) {
+                currentStep++;
+                showCurrentStep();
+            } else {
+                // Xử lý đặt hàng khi ở bước cuối cùng
+                handleOrderSubmission();
+            }
+        }
+    });
+
+    // Xử lý khi click nút Quay lại
+    document.getElementById('prev-step').addEventListener('click', () => {
+        if (currentStep > 0) {
+            currentStep--;
+            showCurrentStep();
+        }
+    });
+
+    // Khởi tạo hiển thị bước đầu tiên
+    showCurrentStep();
+
+    // Tính phí giao hàng dựa trên khu vực được chọn
+    function updateDeliveryFee(radioButton) {
+        const fee = parseInt(radioButton.dataset.fee);
+        const subtotal = parseInt(document.getElementById('cart-subtotal').textContent.replace(/[^\d]/g, '')) || 0;
+        
+        // Cập nhật phí giao hàng
+        document.getElementById('delivery-fee').textContent = fee.toLocaleString() + '₫';
+        document.getElementById('order-delivery-fee').textContent = fee.toLocaleString() + '₫';
+        
+        // Cập nhật tổng tiền
+        const total = subtotal + fee;
+        document.getElementById('cart-total').textContent = total.toLocaleString() + '₫';
+        document.getElementById('order-total').textContent = total.toLocaleString() + '₫';
+        
+        // Ẩn thông báo vùng phục vụ nếu có
+        document.getElementById('delivery-zone-notice').classList.add('hidden');
+    }
+
+    // Hiển thị dialog liên hệ cho khu vực 4
+    function showContactDialog() {
+        // Bỏ chọn radio button khu vực 4
+        const zone4Radio = document.querySelector('input[value="zone4"]');
+        zone4Radio.checked = false;
+        
+        // Hiển thị thông báo
+        const message = 'Để đặt hàng cho khu vực trên 10km, vui lòng gọi 1900xxxx để được tư vấn về phí giao hàng.';
+        alert(message);
+        
+        // Hiển thị thông báo vùng phục vụ
+        document.getElementById('delivery-zone-notice').classList.remove('hidden');
+    }
+
+    // Lưu thông tin đơn hàng tạm thời
+    let orderData = {
+        customer: {},
+        items: [],
+        delivery: {},
+        payment: {},
+        total: {}
+    };
+
+    // Cập nhật thông tin khi chuyển bước
+    function handleStepChange() {
+        if (currentStep === ORDER_STEPS.indexOf('delivery-address')) {
+            // Lưu thông tin khách hàng khi hoàn thành bước địa chỉ
+            orderData.customer = {
+                fullname: document.getElementById('fullname').value,
+                phone: document.getElementById('phone').value,
+                street: document.getElementById('street').value,
+                ward: document.getElementById('ward').value,
+                district: document.getElementById('district').value,
+                city: document.getElementById('city').value,
+                notes: document.getElementById('notes').value || 'Không có ghi chú'
+            };
+
+            // Lưu thông tin giao hàng
+            const selectedZone = document.querySelector('input[name="delivery-zone"]:checked');
+            if (selectedZone) {
+                orderData.delivery = {
+                    zone: selectedZone.value,
+                    fee: parseInt(selectedZone.dataset.fee),
+                    distance: getZoneDistance(selectedZone.value)
+                };
+            }
+        } else if (currentStep === ORDER_STEPS.indexOf('payment-method')) {
+            // Lưu thông tin thanh toán
+            const selectedPayment = document.querySelector('input[name="payment"]:checked');
+            if (selectedPayment) {
+                orderData.payment = {
+                    method: selectedPayment.value,
+                    text: getPaymentText(selectedPayment.value)
+                };
+            }
+        }
+
+        // Lưu thông tin giỏ hàng và tổng tiền
+        const subtotal = parseInt(document.getElementById('cart-subtotal').textContent.replace(/[^\d]/g, '')) || 0;
+        const deliveryFee = orderData.delivery ? orderData.delivery.fee : 0;
+        
+        orderData.total = {
+            subtotal: subtotal,
+            deliveryFee: deliveryFee,
+            total: subtotal + deliveryFee
+        };
+    }
+
+    // Lấy text khoảng cách theo khu vực
+    function getZoneDistance(zone) {
+        switch(zone) {
+            case 'zone1': return '0-3 km';
+            case 'zone2': return '3-6 km';
+            case 'zone3': return '6-10 km';
+            case 'zone4': return 'Trên 10 km';
+            default: return '';
+        }
+    }
+
+    // Lấy text phương thức thanh toán
+    function getPaymentText(method) {
+        switch(method) {
+            case 'cod': return 'Thanh toán khi nhận hàng (COD)';
+            case 'card': return 'Thanh toán bằng thẻ';
+            case 'momo': return 'Ví MoMo';
+            default: return '';
+        }
+    }
+
+    // Cập nhật hiển thị xác nhận đơn hàng
+    function updateOrderConfirmation() {
+        if (!orderData.customer || !orderData.delivery) {
+            showError('Không tìm thấy thông tin đơn hàng');
+            return false;
+        }
+
+        // Hiển thị thông tin người nhận
+        document.getElementById('confirm-name').textContent = orderData.customer.fullname;
+        document.getElementById('confirm-phone').textContent = orderData.customer.phone;
+        document.getElementById('confirm-address').textContent = `${orderData.customer.street}, ${orderData.customer.ward}, ${orderData.customer.district}, ${orderData.customer.city}`;
+        document.getElementById('confirm-notes').textContent = orderData.customer.notes;
+
+        // Hiển thị chi tiết đơn hàng
+        const cartItems = document.getElementById('cart-items');
+        const confirmItems = document.getElementById('confirm-items');
+        confirmItems.innerHTML = cartItems.innerHTML;
+
+        // Hiển thị thông tin thanh toán
+        document.getElementById('confirm-subtotal').textContent = orderData.total.subtotal.toLocaleString() + '₫';
+        document.getElementById('confirm-distance').textContent = orderData.delivery.distance;
+        document.getElementById('confirm-delivery-fee').textContent = orderData.delivery.fee.toLocaleString() + '₫';
+        document.getElementById('confirm-total').textContent = orderData.total.total.toLocaleString() + '₫';
+        document.getElementById('confirm-payment').textContent = orderData.payment.text;
+
+        return true;
+    }
+
+    // Xử lý khi click nút Tiếp theo
+    document.getElementById('next-step').addEventListener('click', () => {
+        if (validateCurrentStep()) {
+            handleStepChange(); // Lưu thông tin trước khi chuyển bước
+            if (currentStep < ORDER_STEPS.length - 1) {
+                currentStep++;
+                showCurrentStep();
+            } else {
+                // Xử lý đặt hàng khi ở bước cuối cùng
+                handleOrderSubmission();
+            }
+        }
+    });
+
+    // Xử lý khi click nút Quay lại
+    document.getElementById('prev-step').addEventListener('click', () => {
+        if (currentStep > 0) {
+            currentStep--;
+            showCurrentStep();
+        }
+    });
+
+    // Xác thực từng bước
+    function validateCurrentStep() {
+        switch(ORDER_STEPS[currentStep]) {
+            case 'cart-review':
+                return validateCart();
+            case 'delivery-address':
+                return validateDeliveryAddress();
+            case 'payment-method':
+                return validatePayment();
+            case 'order-confirmation':
+                return updateOrderConfirmation();
+            default:
+                return true;
+        }
+    }
+
+    // Xác thực thông tin địa chỉ
+    function validateDeliveryAddress() {
+        const requiredFields = ['fullname', 'phone', 'street', 'ward', 'district', 'city'];
+        let isValid = true;
+
+        // Kiểm tra các trường bắt buộc
+        for (const field of requiredFields) {
+            const input = document.getElementById(field);
+            if (!input.value.trim()) {
+                input.classList.add('border-red-500');
+                isValid = false;
+            } else {
+                input.classList.remove('border-red-500');
+            }
+        }
+
+        // Kiểm tra số điện thoại
+        const phone = document.getElementById('phone').value;
+        if (!phone.match(/^0[0-9]{9}$/)) {
+            document.getElementById('phone').classList.add('border-red-500');
+            isValid = false;
+        }
+
+        // Kiểm tra khu vực giao hàng
+        const selectedZone = document.querySelector('input[name="delivery-zone"]:checked');
+        if (!selectedZone) {
+            showError('Vui lòng chọn khu vực giao hàng');
+            isValid = false;
+        }
+
+        if (!isValid) {
+            showError('Vui lòng điền đầy đủ thông tin giao hàng');
+        }
+
+        return isValid;
+    }
+
+    // Xác thực giỏ hàng
+    function validateCart() {
+        const cartItems = document.querySelectorAll('.cart-item');
+        if (cartItems.length === 0) {
+            showError('Giỏ hàng của bạn đang trống');
+            return false;
+        }
+        return true;
+    }
+
+    // Xác thực phương thức thanh toán
+    function validatePayment() {
+        const selectedPayment = document.querySelector('input[name="payment"]:checked');
+        if (!selectedPayment) {
+            showError('Vui lòng chọn phương thức thanh toán');
+            return false;
+        }
+        return true;
+    }
+    </script>
+</body>
+</html>
